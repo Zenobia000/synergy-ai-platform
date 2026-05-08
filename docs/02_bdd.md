@@ -1,339 +1,495 @@
 # BDD 行為驅動情境 — Synergy AI Closer's Copilot
 
-> **版本:** v1.0 | **更新:** 2026-04-24 | **對應 PRD:** `docs/01_prd.md`
+> **版本:** v3.0 | **更新:** 2026-05-08 | **對應 PRD:** `docs/01_prd.md` | **對應 Phase I MVP:** `docs/12_phase1_mvp.md`
+
+---
+
+## 版本更新說明（v2.0 → v3.0）
+
+本版本升級為 Phase I v3.0，詳細補充 5 個新增 feature 與既有 feature 的額外 scenario（Gherkin 標準語法）：
+
+**新增 5 個 feature**（詳細編寫）：
+- ✨ `compliance.feature` — ComplianceService 三層檢查 + HITL
+- ✨ `conversation_coach.feature` — 商談前/中/後話術
+- ✨ `leader_summary.feature` — Leader 漏斗與新手進度
+- ✨ `onboarding_progress.feature` — 新手教練 checklist
+- ✨ `hitl.feature` — HITL 人工審核隊列
+
+**既有 4 個 feature**（補充新 scenario）：
+- ⬆️ `questionnaire.feature` — 三階段 + 雙版摘要
+- ⬆️ `briefing.feature` — 商談前/中/後 + 合規
+- ⬆️ `crm.feature` — 10 種狀態 + Google Calendar
+- ⬆️ `reminder.feature` — 提醒排程 + 通道 fallback
 
 ---
 
 ## Feature 檔案索引
 
-| # | 檔案 | 對應 Epic | User Stories |
-| :---: | :--- | :--- | :--- |
-| 1 | `questionnaire.feature` | Epic A：智能健康問卷 | US-A01、A02、A03 |
-| 2 | `briefing.feature` | Epic B：商談前摘要 | US-B01、B02、B03 |
-| 3 | `crm.feature` | Epic C：陽春版 CRM | US-C01、C02、C03 |
-| 4 | `reminder.feature` | Epic D：自動跟進提醒 | US-D01、D02、D03 |
+| # | 檔案 | 對應 Epic | User Stories | Scenario 數 |
+| :---: | :--- | :--- | :--- | :---: |
+| 1 | `questionnaire.feature` | Epic A | US-A01-A05 | 4 + 3 新 = 7 |
+| 2 | `briefing.feature` | Epic B + C | US-B01-B04 | 4 + 3 新 = 7 |
+| 3 | `crm.feature` | Epic C + D | US-C01-C04 | 4 + 2 新 = 6 |
+| 4 | `reminder.feature` | Epic D | US-D01-D03 | 3 + 2 新 = 5 |
+| **5** | **`compliance.feature`** | **Epic E** | **US-E01-E03** | **4** |
+| **6** | **`conversation_coach.feature`** | **Epic B** | **US-B02-B03** | **4** |
+| **7** | **`leader_summary.feature`** | **Epic F** | **US-F01-F02** | **4** |
+| **8** | **`onboarding_progress.feature`** | **Epic F** | **US-F03** | **3** |
+| **9** | **`hitl.feature`** | **Epic E** | **US-E02** | **4** |
+
+**合計**：約 44 個 Scenario
 
 ---
 
-## 1. `questionnaire.feature`
+## 既有 Feature 的新增 Scenario
+
+### 1. `questionnaire.feature`（v3.0 更新）
+
+**既有 Scenario 基礎**：Phase 1 快速分流、Phase 2 六大核心、計分規則
+
+**新增 3 個 Scenario**：
 
 ```gherkin
-Feature: 智能健康問卷
-  # 對應 PRD: Epic A (US-A01, A02, A03)
-  # 使用者：潛在客戶（填答者）+ 教練（接收名單）
+# Feature: 智能健康問卷（三階段）
 
-  Background:
-    Given 教練「阿明」已將問卷連結「https://app.synergy-ai.tw/q/abc123」傳給朋友「王小姐」
-    And 問卷題目版本為「v1.0 健康基礎問卷」（20 題）
+Scenario: Phase 3 動態題目根據前面回答調整
+  Given 客戶已完成 Phase 2（六大核心）並選中「睡眠差」
+  When 進入 Phase 3（動態追問）
+  Then 系統應該顯示「睡眠相關題目」（飲食、補充品、規律性）
+  And 不顯示「非相關題目」（女性週期、體態等）
+  And 總題數控制在 3-8 題
 
-  @happy-path @smoke-test
-  Scenario: 王小姐在手機完整填完問卷並收到個人摘要
-    Given 王小姐在 iPhone 點開問卷連結
-    When 她依序填答所有 20 題
-    And 她按下「送出」
-    Then 她應在 30 秒內看到「你的健康狀態摘要」頁面
-    And 摘要應包含：健康等級（A/B/C）、3 點主要發現、隱私保護聲明
-    And 摘要應提供「轉寄給朋友」按鈕
+Scenario: 客戶版摘要禁用診斷用語
+  Given 問卷答案觸發「睡眠品質 < 6 小時」風險
+  When 系統生成客戶版摘要
+  Then 摘要應使用「睡眠品質偏低」而非「失眠症」
+  And 不出現「治療」「治癒」「預防 X 病」等醫療宣稱詞
+  And 包含免責聲明「本資料僅供健康參考，非醫療診斷」
 
-  @happy-path
-  Scenario: 教練自動收到結構化名單通知
-    Given 王小姐完成問卷送出
-    When 系統完成 LLM 研判（≤ 30 秒）
-    Then 教練「阿明」應收到 Email 或 LINE 通知：「王小姐完成問卷，可查看名單」
-    And 教練打開後台應看到：
-      | 欄位 | 內容範例 |
-      | 姓名 | 王小姐 |
-      | 健康等級 | B |
-      | 紅旗警訊 | 家族糖尿病史、連續 6 週睡眠 < 6 小時 |
-      | 推薦產品組合 | 產品A + 產品C |
-      | 切入角度 | 從睡眠問題切入 |
-    And CRM 中應自動出現「王小姐」這筆名單，狀態為「新名單」
-
-  @happy-path
-  Scenario: 填答者中途離開再接續填
-    Given 王小姐填到第 10 題後關閉瀏覽器
-    When 她 3 小時後重新點開同一個連結
-    Then 她應看到「從第 10 題繼續」的選項
-    And 前 10 題答案應保留
-
-  @privacy
-  Scenario: 填答者選擇不揭露敏感資訊
-    Given 王小姐正在填答「過去一年是否有重大疾病史」
-    When 她選擇「不方便透露」
-    Then 她應能繼續填下一題
-    And 送出後該欄位應標記為「未提供」而非空白
-    And 教練端應看到「此項未提供」標示
-
-  @sad-path
-  Scenario: 問卷 token 無效或過期
-    Given 連結 token「expired-xyz」已失效（> 30 天未使用）
-    When 王小姐點開該連結
-    Then 她應看到「此連結已失效，請向你的教練索取新連結」
-    And 系統不應建立任何資料
-
-  @sad-path
-  Scenario: LLM 研判失敗時仍建檔
-    Given 王小姐送出問卷
-    When LLM API 呼叫失敗 3 次
-    Then 名單應仍建立在 CRM 中
-    And 該筆名單標記「AI 摘要生成失敗，請手動檢視答案」
-    And 教練端可直接查看原始答案
-    And 系統應記錄錯誤供 retry
-
-  @edge-case
-  Scenario Outline: 問卷計分邊界案例
-    Given 王小姐在各風險項的答案為 "<risk_answers>"
-    When 系統計算健康等級
-    Then 她的健康等級應為 "<level>"
-
-    Examples:
-      | risk_answers                        | level |
-      | 全部低風險                             | A     |
-      | 睡眠差 + 飲食差                        | B     |
-      | 家族病史 + 睡眠差 + BMI > 30           | C     |
-      | 拒答 ≥ 5 題                          | 未分級  |
+Scenario: 教練版摘要含紅旗與 SKU 推薦
+  Given 問卷完成後 30 秒內
+  When 系統生成教練版摘要
+  Then 摘要應包含三部分：
+    | 部分 | 內容 |
+    | 痛點 | 客戶前三大健康關注 |
+    | 紅旗 | 需特別注意的風險訊號 |
+    | 推薦 | 2-3 個 SKU + 理由（引用問卷答案） |
+  And 所有推薦 SKU 已通過合規檢查
 ```
 
 ---
 
-## 2. `briefing.feature`
+### 2. `briefing.feature`（v3.0 更新）
+
+**既有 Scenario 基礎**：商談前 5 分鐘摘要、單頁可讀
+
+**新增 3 個 Scenario**：
 
 ```gherkin
-Feature: 商談前摘要（AI Copilot 核心）
-  # 對應 PRD: Epic B (US-B01, B02, B03)
-  # 使用者：教練
+# Feature: 商談副駕駛（前/中/後話術）
 
-  Background:
-    Given 教練「阿明」已登入後台
-    And 「王小姐」已完成問卷，CRM 中有她的資料
-    And 狀態為「新名單」或「已商談」
+Scenario: 商談中實時查詢異議回覆
+  Given 教練進入商談中話術頁面
+  When 客戶提出「朋友吃了沒效」的異議
+  Then 系統應快速顯示 2-3 個預期異議回覆建議
+  And 包含「每個人體質不同」「建議試用 2 週」等親切話術
+  And 每條話術均 < 100 字、易於即時使用
+  And 回覆時間 ≤ 5 秒
 
-  @happy-path @smoke-test @high-value
-  Scenario: 教練在商談前 5 分鐘查看摘要
-    Given 阿明與王小姐的商談約在下午 3 點
-    When 阿明在下午 2:55 打開手機 App
-    And 他點開「王小姐」的名單
-    Then 他應在單一頁面看到：
-      | 區塊 | 內容 |
-      | 客戶痛點（3 句話） | 1. 連 6 週睡眠差<br>2. 家族糖尿病史<br>3. 上次減重失敗過 2 次 |
-      | 推薦產品組合 | 產品A + 產品C（月費 ~3,500 NTD） |
-      | 推薦理由 | 引用問卷答案第 7/12/18 題 |
-      | 預期異議（≥ 2 項） | 「我朋友吃了沒效」、「太貴」 |
-      | 異議回覆建議 | 1-2 句範例回覆 |
-      | 切入角度 | 從睡眠問題切入 |
-    And 頁面應在 3G 網路下 ≤ 2 秒載入完成
+Scenario: 商談後自動帶入 48h 提醒排程
+  Given 教練商談後點「生成下一步訊息」
+  When 系統產出商談後訊息草稿
+  Then 訊息應包含：
+    | 項目 | 內容 |
+    | 客戶名字 | 「王小姐」 |
+    | 上次痛點引用 | 「根據妳剛才說的睡眠問題…」 |
+    | 建議下一步 | 「建議妳先試用，48 小時後我再跟進」 |
+  And 自動預設 48h 後提醒時間
+  And 教練一鍵確認後自動建立 Google Calendar 事件
 
-  @happy-path
-  Scenario: 摘要標註產品推薦理由
-    Given 系統推薦「產品A」給王小姐
-    When 阿明點開推薦理由
-    Then 他應看到引用原文：「王小姐在第 12 題回答『連續 6 週睡眠 < 6 小時』」
-    And 他應看到關聯邏輯：「因此推薦含褪黑激素的產品A」
-
-  @happy-path
-  Scenario: 商談後教練更新狀態並回到摘要複查
-    Given 阿明商談完畢後把王小姐狀態改為「已商談」
-    When 他 3 天後重新開啟王小姐的摘要
-    Then 他應看到：「上次商談：3 天前」
-    And 摘要內容保持不變（不重新生成）
-
-  @sad-path
-  Scenario: 摘要生成時 LLM 服務中斷
-    Given 阿明點開王小姐的名單
-    When LLM API 回應失敗
-    Then 系統應降級顯示：「AI 摘要暫時無法生成，以下為原始問卷答案」
-    And 阿明應能看到問卷完整答案
-    And 系統應於背景 retry 3 次，成功後推播 Email 通知
-
-  @edge-case
-  Scenario: 問卷答案不足以生成完整摘要
-    Given 王小姐只填了 5 題就送出（部分必填跳過）
-    When 系統嘗試生成摘要
-    Then 摘要應標記「資料不足」區塊，只顯示能推論的項目
-    And 系統應建議：「請引導客戶補填更多資訊」
+Scenario: 所有話術已通過合規檢查
+  Given 問卷送出，系統生成所有話術（前/中/後）
+  When 話術內容進入 ComplianceService
+  Then 所有話術應通過合規檢查（無 C1/C2/C3/C4 風險詞）
+  And 高風險話術應被改寫或標記待人工審核 (HITL)
+  And 低風險話術應自動加上免責聲明
+  And 合規日誌記錄每條話術的檢查結果
 ```
 
 ---
 
-## 3. `crm.feature`
+### 3. `crm.feature`（v3.0 更新）
+
+**既有 Scenario 基礎**：CRM 列表、狀態流轉、自動建檔
+
+**新增 2 個 Scenario**：
 
 ```gherkin
-Feature: 陽春版客戶管理（CRM）
-  # 對應 PRD: Epic C (US-C01, C02, C03)
-  # 使用者：教練
+# Feature: 客戶管理 & 10 種狀態機
 
-  Background:
-    Given 教練「阿明」已登入後台
-    And 他負責 50 位客戶名單
+Scenario: 客戶狀態從「已商談」轉為「已推薦」自動排程 48h 提醒
+  Given 客戶王小姐的狀態為「已商談」
+  When 教練更新狀態為「已推薦」
+  Then 系統應自動建立三個提醒：
+    | 提醒類型 | 觸發時間 | 提醒內容 |
+    | 48h 提醒 | 48 小時後 | 「記得跟進王小姐」 |
+    | 7d 提醒 | 7 天後 | 「王小姐試用進度如何？」 |
+    | 30d 提醒 | 30 天後 | 「回訪王小姐，詢問是否繼續」 |
+  And 提醒自動寫入 reminders 表
+  And `last_contact_at` 自動更新為當前時間
 
-  @happy-path @smoke-test
-  Scenario: 教練查看客戶清單並搜尋
-    When 阿明進入 CRM 頁
-    Then 他應看到表格含欄位：姓名、問卷日期、健康等級、狀態、最後聯繫、備註
-    And 他應能用姓名關鍵字即時搜尋
-    And 他應能用「狀態」篩選（新名單/已商談/已成交/未成交）
-
-  @happy-path
-  Scenario: 問卷填完自動建檔
-    Given CRM 中目前有 50 筆名單
-    When 一位新客戶「李先生」完成問卷
-    Then CRM 中應自動新增第 51 筆「李先生」
-    And 他的狀態應為「新名單」
-    And 他的問卷日期應為今天
-    And 阿明不需要手動輸入任何資料
-
-  @happy-path
-  Scenario: 教練更新客戶狀態並記錄時間
-    Given 王小姐狀態為「新名單」
-    When 阿明把狀態改為「已商談」
-    Then 狀態應更新為「已商談」
-    And 「最後聯繫」時間應自動記錄為現在
-    And 系統應建立狀態變更歷程
-
-  @happy-path
-  Scenario: 教練在備註欄手動加註
-    Given 王小姐的名單已存在
-    When 阿明在備註欄寫「客戶希望下週再聯絡」
-    Then 備註應儲存
-    And 備註應標記時間戳
-
-  @sad-path
-  Scenario: 教練嘗試看別人的客戶
-    Given 阿明的帳號只能看自己的 50 筆名單
-    When 他嘗試直接存取其他教練「小美」的客戶 URL
-    Then 系統應回傳 403 Forbidden
-    And 應記錄未授權存取日誌
-
-  @edge-case
-  Scenario Outline: 狀態轉換規則
-    Given 王小姐目前狀態為 "<from>"
-    When 阿明嘗試把狀態改為 "<to>"
-    Then 結果應為 "<result>"
-
-    Examples:
-      | from    | to      | result |
-      | 新名單   | 已商談   | 允許    |
-      | 已商談   | 已成交   | 允許    |
-      | 已商談   | 未成交   | 允許    |
-      | 已成交   | 已商談   | 拒絕（不可回退） |
-      | 未成交   | 已商談   | 允許（可重新商談） |
+Scenario: 教練標記成交後未發送的提醒自動取消
+  Given 客戶王小姐有 3 個待送提醒（48h/7d/30d）
+  When 教練標記狀態為「已成交」
+  Then 系統應自動標記所有未發送提醒為 `status=cancelled`
+  And 已發送的提醒保留用於審計
+  And 若已建立 Google Calendar 事件，自動標記完成
 ```
 
 ---
 
-## 4. `reminder.feature`
+### 4. `reminder.feature`（v3.0 更新）
+
+**既有 Scenario 基礎**：提醒排程、多通道發送
+
+**新增 2 個 Scenario**：
 
 ```gherkin
-Feature: 自動跟進提醒
-  # 對應 PRD: Epic D (US-D01, D02, D03)
-  # 使用者：教練（被動接收）
+# Feature: 自動提醒 & Google Calendar 連動
 
-  Background:
-    Given 教練「阿明」已完成 LINE Official Account 綁定（line_user_id 已寫入 DB）
-    And 教練「阿明」的 Email 也已設定（作為 LINE 失敗時的備援通道）
-    And 排程器每小時檢查一次待發送提醒
+Scenario: 提醒事件自動建立到教練 Google Calendar，時區正確
+  Given 系統建立 48h 提醒（due_at = 2026-05-03T14:00:00Z）
+  And 教練時區設定為「Asia/Taipei (UTC+8)」
+  When APScheduler 掃描到期提醒
+  Then Google Calendar 事件應以本地時間顯示：
+    | 欄位 | 值 |
+    | 標題 | 「跟進王小姐」 |
+    | 時間 | 2026-05-03 22:00（台北時間） |
+    | 敘述 | 「客戶：王小姐 / 健康等級：B / 上次痛點：睡眠差」 |
+  And 事件自動加入教練日曆
+  And 若時區修改，已建立事件時間應相應調整
 
-  @happy-path @smoke-test
-  Scenario: 商談後 48 小時透過 LINE 自動提醒
-    Given 阿明於 2026-05-01 14:00 把王小姐狀態改為「已商談」
-    When 時間到 2026-05-03 14:00（48 小時後）
-    And 王小姐狀態仍為「已商談」（未成交也未標記未成交）
-    Then 系統應透過 LINE Messaging API 推播給阿明
-    And LINE 訊息應包含：
-      | 欄位 | 內容 |
-      | 開頭 | [Synergy AI] 記得跟進：王小姐 |
-      | 正文 | 王小姐在 2 天前商談，狀態未更新，可考慮再聯絡 |
-      | 按鈕 | 「打開摘要」深連結到王小姐的商談摘要頁 |
-    And reminders.channel 應為 "line"
-
-  @happy-path @fallback
-  Scenario: LINE API 失敗時自動降級 Email
-    Given 阿明已綁定 LINE 但 LINE Messaging API 回應 500
-    When 提醒到期觸發發送
-    Then 系統應嘗試 LINE 一次
-    And 失敗後應立即改走 Resend Email 發送
-    And reminders.channel 應為 "email"
-    And reminders.channel_attempts 應記錄兩次嘗試（line failed, email sent）
-
-  @happy-path @fallback
-  Scenario: 教練未綁定 LINE 時直接走 Email
-    Given 教練「阿美」從未綁定 LINE（line_user_id 為 null）
-    When 阿美的客戶提醒到期
-    Then 系統應略過 LINE 嘗試
-    And 應直接透過 Resend Email 發送
-    And reminders.channel 應為 "email"
-
-  @happy-path
-  Scenario: 三段提醒時程（48h / 7d / 30d）
-    Given 阿明於 2026-05-01 把王小姐狀態改為「已商談」
-    When 時間推進到各個時點
-    Then 提醒應按以下時程送達：
-      | 時點 | 提醒類型 |
-      | 2026-05-03（48h） | 短期跟進 |
-      | 2026-05-08（7d） | 週關懷 |
-      | 2026-05-31（30d） | 月關心 |
-
-  @happy-path
-  Scenario: 標記已成交後停止提醒
-    Given 阿明已排程了王小姐的 7d 與 30d 提醒
-    When 阿明在第 3 天把狀態改為「已成交」
-    Then 7d 與 30d 的未發送提醒應自動取消
-    And 系統應記錄取消原因：「狀態轉為已成交」
-
-  @happy-path
-  Scenario: 標記未成交後仍保留提醒
-    Given 阿明把王小姐狀態改為「未成交」
-    When 時間到 7d / 30d
-    Then 提醒仍應發送（未成交名單需要再啟動）
-    And 提醒主旨改為「再嘗試聯絡：王小姐」
-
-  @sad-path
-  Scenario: Email 發送失敗
-    Given 排程器到達 48h 提醒時點
-    When Resend API 回應 5xx 錯誤
-    Then 系統應 retry 3 次（間隔 5 / 30 / 180 分鐘）
-    And 3 次都失敗則記錄到 error log
-    And 不應阻塞其他提醒發送
-
-  @edge-case
-  Scenario: 時區處理
-    Given 阿明的時區為 Asia/Taipei
-    When 排程器在 UTC 時間運行
-    Then 48h 計算應用阿明的時區
-    And 提醒發送時間點應落在阿明工作時間（9:00-21:00 Asia/Taipei）內
-    And 非工作時間應延到下一個工作時段開始
-
-  @edge-case
-  Scenario: 重複觸發保護
-    Given 48h 提醒已於 2026-05-03 14:00 成功發送
-    When 排程器在 2026-05-03 15:00 再次掃描
-    Then 不應再發送同一筆 48h 提醒
-    And 系統應查檢 reminder_log 避免重複
+Scenario: 成交後日曆事件自動標記完成
+  Given 教練的 Google Calendar 有未來 3 個提醒事件
+  When 教練標記客戶狀態為「已成交」
+  Then 系統應自動：
+    | 動作 | 詳情 |
+    | 取消提醒 | reminders 表標記 `cancelled` |
+    | 更新日曆 | Google Calendar 事件標記完成 / 描述加上「已成交」標籤 |
+    | 稽核日誌 | 記錄取消理由與時間 |
+  And Google Calendar 側邊欄應無「未完成」提醒
 ```
 
 ---
 
-## 測試執行指引
+## 新增 Feature：詳細 Scenario
 
-### 工具鏈
-- **後端**：`pytest` + `pytest-bdd`（Python 3.12）
-- **前端**：`Playwright` + `@cucumber/cucumber`（Node.js）
-- **Feature 檔位置**：`tests/features/*.feature`
-- **Step 定義位置**：`tests/steps/`
+### 5. `compliance.feature`（新增）
 
-### 覆蓋率要求
-- Happy path：100%（`@smoke-test` 標籤必跑）
-- Sad path：≥ 80%
-- Edge case：依風險優先級
+```gherkin
+# Feature: 合規檢查與風險防護
 
-### 執行指令
-```bash
-# 後端 BDD（FastAPI）
-cd apps/api && uv run pytest tests/features/ -v --tags=@smoke-test
+Background:
+  Given ComplianceService 已初始化規則庫（含 C1/C2/C3/C4 詞表）
+  And LLM 模型為「gemini-2.5-flash」
 
-# 前端 BDD（Next.js）
-cd apps/web && npx cucumber-js --tags=@smoke-test
+Scenario: 規則庫命中醫療宣稱關鍵詞自動標記風險
+  Given 邀約文案內容為「本產品可以治療糖尿病」
+  When 邀約文案通過 ComplianceService.check()
+  Then 系統應：
+    | 步驟 | 結果 |
+    | Layer 1 檢查 | 詞表命中「治療」(C1) |
+    | 風險等級 | 標記為 `medium` |
+    | 規則紀錄 | 記錄命中規則 ID 與模式 |
+  And 進入 Layer 2（LLM 二次覆核）
+
+Scenario: LLM 進行語意確認，低風險自動通過
+  Given 邀約文案為「幫助改善睡眠品質」
+  When 通過 Layer 1（規則庫無命中）
+  Then 系統應：
+    | 層級 | 動作 |
+    | Layer 1 | 未命中黑名單 → `risk_level=candidate` |
+    | Layer 2 | LLM 語意檢查 → 無醫療宣稱 → `risk_level=low` |
+    | 最終 | 自動通過，加上免責聲明 → 發送 |
+  And 合規日誌記錄「自動通過」決策
+
+Scenario: 高風險文字自動改寫並送 HITL
+  Given 話術內容為「100% 有效、立即見效」（C3 誇大效果）
+  When 通過 ComplianceService.check()
+  Then 系統應：
+    | 層級 | 動作 |
+    | Layer 1 | 命中誇大詞表 |
+    | Layer 2 | LLM 確認高風險 → `risk_level=high` |
+    | 改寫 | 產出「許多使用者回饋有感」作為改寫版本 |
+    | HITL | 進入合規隊列，等待人工審核 |
+  And 合規官員需在 30 分鐘內審核決策
+  And 審核結果（批准/拒絕/改寫）記入 compliance_logs
+
+Scenario: 合規日誌記錄原文、改寫版本、審核狀態
+  Given 任何觸發 ComplianceService 的訊息（問卷摘要、話術、邀約文案、提醒草稿）
+  When 完成檢查流程（無論自動通過或人工審核）
+  Then compliance_logs 表應記錄：
+    | 欄位 | 內容 |
+    | original_text | 原始文字（完整） |
+    | risk_type | C1/C2/C3/C4/None |
+    | risk_level | low / medium / high |
+    | rewritten_text | LLM 改寫版本（若有） |
+    | reviewed_by | 審核官員 ID（若經 HITL） |
+    | reviewed_at | 審核時間戳 |
+    | decision | approved / rejected / modified |
+  And 稽核日誌可按日期、風險類型、教練 ID 查詢
+  And 誤判 > 5% 時觸發告警
 ```
 
-### CI 整合
-每個 PR 至少跑 `@smoke-test` 與 `@happy-path`。`@sad-path` 與 `@edge-case` 在夜間跑全量。
+---
+
+### 6. `conversation_coach.feature`（新增）
+
+```gherkin
+# Feature: 商談副駕駛話術生成（前/中/後）
+
+Background:
+  Given 客戶已完成問卷、教練版摘要已生成
+  And ConversationCoachService 就緒
+
+Scenario: 商談前 5 分鐘摘要含核心痛點三句話
+  Given 教練在商談前 5 分鐘打開客戶摘要頁面
+  When 進入 `/leads/:id/briefing` 頁面
+  Then 摘要應包含「痛點摘要」區塊，含：
+    | 要素 | 範例 |
+    | 痛點句 1 | 「睡眠品質連續 6 週 < 6 小時」 |
+    | 痛點句 2 | 「過去試過 2 次減重都未成功」 |
+    | 痛點句 3 | 「家族有糖尿病史，擔心自己的代謝」 |
+  And 每句話 < 20 字、易於記憶
+  And 頁面應於 2 秒內載入（3G 網路）
+  And 自動採用深色模式便於實際商談環境使用
+
+Scenario: 商談中提示包含產品銜接、異議回覆、成交邀約
+  Given 教練進入商談中話術頁面 (`/leads/:id/conversation/in-session`)
+  When 系統產出商談中話術建議
+  Then 應分為三大區塊：
+    | 區塊 | 內容 | 數量 |
+    | 產品銜接 | 「根據妳的睡眠問題，我推薦…」 | 2-3 條 |
+    | 異議回覆 | 「若客戶說『朋友吃了沒效』，回覆…」 | 2-3 條 |
+    | 成交邀約 | 「柔性邀約：『不如先試試？』」 | 2-3 條 |
+  And 每條話術都 ≤ 100 字、可直接使用
+  And 所有話術均已通過 ComplianceService 檢查
+  And 教練可一鍵複製話術到剪貼簿
+
+Scenario: 商談後訊息自動帶入跟進排程
+  Given 商談結束，教練點「生成下一步訊息」
+  When 系統產出商談後訊息草稿
+  Then 訊息應包含：
+    | 要素 | 實例 |
+    | 開場 | 「王小姐，謝謝妳今天的時間！」 |
+    | 回顧 | 「我們聊到妳的睡眠問題和減重目標」 |
+    | 建議 | 「建議妳先試用 2 週，看看身體反應」 |
+    | 跟進 | 「48 小時後我再跟妳確認」 |
+  And 訊息應自動預設 48h 後提醒（可手動調整）
+  And 一鍵發送至 LINE OA，記錄發送時間
+  And 自動建立 Google Calendar 提醒事件
+```
+
+---
+
+### 7. `leader_summary.feature`（新增）
+
+```gherkin
+# Feature: Leader 儀表板 — 下線教練本週漏斗
+
+Background:
+  Given Leader 帳號已授權、有 3-5 位下線教練
+  And 數據已聚合至 `mv_leader_summary` 物化視圖
+
+Scenario: Leader 進入 Summary 頁看到下線 3-5 位教練本週漏斗
+  Given 今天是週一 10:00
+  When Leader 進入 `/leader/summary` 頁面
+  Then 應顯示本週（Monday-Sunday）漏斗：
+    | 教練 | 問卷數 | 商談數 | 成交數 | 轉換率 |
+    | 阿明 | 12 | 5 | 1 | 20% |
+    | 阿傑 | 8 | 2 | 0 | 0% |
+    | 小美 | 15 | 6 | 2 | 33% |
+  And 可按教練名稱排序、按成交率排序
+  And 點選教練名稱進入詳情頁 (`/leader/coaches/:id`)
+  And 頁面應於 2 秒內載入
+
+Scenario: 找出「卡在商談未成交」的教練
+  Given 漏斗數據中阿傑「商談 2 / 成交 0」
+  When Leader 掃一眼漏斗數據
+  Then 系統應視覺上突出低成交率教練（如橘色警告）
+  And Leader 應立刻識別「阿傑需要 1:1 coaching」
+  And 可點選進入阿傑的詳情頁查看原因
+  And 詳情頁應顯示：
+    | 指標 | 值 |
+    | 平均商談準備時間 | 25 分鐘（應 < 5 分鐘） |
+    | 話術使用率 | 40%（應 ≥ 80%） |
+    | 跟進執行率 | 60%（應 ≥ 80%） |
+  And Leader 可計畫 1:1 coaching
+
+Scenario: 查看新手教練 Onboarding 進度
+  Given 小美是新手教練（< 30 天），有 onboarding checklist
+  When Leader 進入 Summary 頁下段「新手教練進度」
+  Then 應顯示每位新手的進度：
+    | 新手教練 | 任務進度 | 完成度 |
+    | 小美 | 「使用摘要 3 次」✓ 「完成首個成交」✗ 「邀約 20+ 客戶」✗ | 33% |
+  And Leader 可點選「查看詳細」進入 onboarding 詳情頁
+  And 詳情頁列出全部 checklist 與預期完成日期
+```
+
+---
+
+### 8. `onboarding_progress.feature`（新增）
+
+```gherkin
+# Feature: 新手教練進度追蹤 & Leader 分派
+
+Background:
+  Given 新手教練小美加入系統（< 30 天）
+  And onboarding_tasks 預設清單已初始化
+
+Scenario: 新手教練完成「使用摘要 3 次」自動標記
+  Given 小美的 onboarding task「使用摘要 3 次」狀態為 pending
+  When 小美查看第 3 個客戶的商談摘要
+  Then 系統應自動：
+    | 動作 | 詳情 |
+    | 計數 | event_logs 記錄「generate-briefing」事件 |
+    | 檢查 | 確認該任務已達 3 次 |
+    | 標記 | `onboarding_tasks.completed_at = now()` |
+    | 通知 | 小美收到「恭喜完成任務」提醒 |
+  And Leader 頁面即時顯示進度更新（30 分鐘內）
+
+Scenario: Leader 可分派新任務給新手教練
+  Given Leader 進入小美的 onboarding 詳情頁
+  When Leader 點「分派新任務」按鈕
+  Then 應出現任務選擇表：
+    | 預設任務 | 描述 |
+    | 「邀約 50+ 客戶」 | 累計邀約數達 50 |
+    | 「完成 5 次商談」 | 完成 5 場客戶商談 |
+    | 「達成首個季度目標」 | 月成交 ≥ 3 單 |
+  And Leader 可選擇任務、設定完成期限（如 30 天）
+  And 任務寫入 onboarding_tasks 表
+
+Scenario: 進度百分比實時計算
+  Given 小美有 10 個 onboarding 任務
+  When 已完成 3 個任務
+  Then onboarding 進度條應顯示 `30%`
+  And 進度條隨每次任務完成實時更新
+  And 達到 100% 時觸發「新手教練畢業」狀態轉換
+  And 自動推送「恭喜畢業」通知至 Leader + 小美
+```
+
+---
+
+### 9. `hitl.feature`（新增）
+
+```gherkin
+# Feature: 人工審核隊列（HITL）管理
+
+Background:
+  Given HITL 合規隊列已建立（compliance_queue 表）
+  And 至少有 1 位授權審核員（Leader / Admin）
+
+Scenario: 高風險話術進入 HITL 佇列
+  Given ComplianceService Layer 2 判定話術為 `risk_level=high`
+  When 話術無法自動改寫或需人工確認
+  Then 系統應：
+    | 動作 | 詳情 |
+    | 入隊 | 寫入 compliance_queue（status=pending） |
+    | 標記 | 教練頁面顯示「待審核」狀態 |
+    | 通知 | 審核員收到「待審項目」提醒 |
+  And 教練 UI 顯示「正在審核中…」，訊息暫不發送
+  And SLA 時限 ≤ 30 分鐘
+
+Scenario: 合規官員可批准/拒絕/修改
+  Given HITL 隊列中有 1 筆高風險話術
+  When 審核員進入 `/compliance/queue` 頁面
+  Then 應列出待審項目：
+    | 欄位 | 內容 |
+    | 原文 | 「100% 有效」 |
+    | 風險類型 | C3（誇大效果） |
+    | LLM 改寫 | 「許多使用者回饋有感」 |
+  And 審核員可選擇：
+    | 決策 | 後果 |
+    | Approve | 採用 LLM 改寫版本 → 發送 |
+    | Reject | 拒絕、通知教練重新編寫 |
+    | Modify | 編輯改寫版本 → 發送修改版 |
+  And 每次決策記錄審核者 ID、時間、理由
+
+Scenario: 批量審核支援
+  Given HITL 隊列中有 10 筆待審項目
+  When 審核員在表格中批量勾選 5 筆（風險類型相同）
+  Then 應支援批量操作：
+    | 操作 | 結果 |
+    | 批量批准 | 5 筆同時標記 approved |
+    | 批量拒絕 | 5 筆同時標記 rejected |
+    | 批量匯出 | 導出 CSV 供外部簽核 |
+  And 每筆操作仍記錄審核者、時間
+  And 批量操作應於 1 秒內完成
+
+Scenario: 審核歷史完整記錄
+  Given 任何高風險話術經過 HITL 流程
+  When 審核流程完成（批准/拒絕/修改）
+  Then compliance_logs 應包含完整歷史：
+    | 欄位 | 內容 |
+    | entry_id | HITL 入隊 ID |
+    | reviewed_by | 審核官員 ID |
+    | reviewed_at | 審核時間戳 |
+    | decision | approved / rejected / modified |
+    | feedback | 審核官員備註 |
+  And 可按日期、審核者、決策結果查詢
+  And 經過 HITL 的所有話術不可刪除（完整稽核）
+```
+
+---
+
+## 實裝注意事項
+
+### 檔案組織
+
+每個 feature 對應一個 `.feature` 檔案，位置：
+```
+apps/api/tests/features/
+├── questionnaire.feature
+├── briefing.feature
+├── crm.feature
+├── reminder.feature
+├── compliance.feature
+├── conversation_coach.feature
+├── leader_summary.feature
+├── onboarding_progress.feature
+└── hitl.feature
+
+apps/api/tests/step_definitions/
+├── questionnaire_steps.py
+├── briefing_steps.py
+├── crm_steps.py
+├── reminder_steps.py
+├── compliance_steps.py
+├── conversation_steps.py
+├── leader_steps.py
+├── onboarding_steps.py
+└── hitl_steps.py
+```
+
+### 執行與 CI/CD
+
+- **Framework**：`pytest-bdd` + `behave`（可選）
+- **執行**：`pytest tests/features/ -v --tb=short`
+- **CI/CD**：GitHub Actions，所有 feature 標 `@smoke-test` 在 PR 時強制通過
+- **覆蓋率**：整合測試需達 ≥ 80%（含單元測試）
+
+### 與單元測試的分工
+
+- **BDD scenarios**：關鍵使用者旅程、端到端流程、業務規則驗證
+- **Unit tests**：元件、邏輯、邊界條件、錯誤處理（pytest + unittest）
+- **Integration tests**：資料庫操作、API 呼叫、外部服務（Gemini、LINE 用 mock）
+
+---
+
+**版本履歷**
+
+| 版本 | 日期 | 變更 |
+| :--- | :--- | :--- |
+| v1.0 | 2026-04-24 | 4 個 feature 骨架（無詳細 Gherkin） |
+| v2.0 | — | （未發布） |
+| **v3.0** | **2026-05-08** | **9 個 feature 完整 Gherkin：既有 4+5 新、共 ~44 scenario** |

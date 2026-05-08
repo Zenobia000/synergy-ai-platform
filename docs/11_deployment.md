@@ -1,6 +1,6 @@
 # 部署與維運指南 — Synergy AI Closer's Copilot
 
-> **版本:** v1.0 | **更新:** 2026-04-24 | **對應架構：** `docs/04_architecture.md §5`
+> **版本:** v3.0 | **更新:** 2026-05-08 | **對應架構：** `docs/04_architecture.md §5` | **對應決策：** ADR-013（Cloudflare Pages）
 
 ---
 
@@ -8,35 +8,87 @@
 
 ```mermaid
 graph TB
-    Users[使用者] --> CDN[Cloudflare CDN]
+    Users[使用者]
+    CF[Cloudflare CDN/Pages]
+    Railway[Railway<br/>apps/api<br/>FastAPI + APScheduler]
+    Supabase[(Supabase Cloud<br/>PostgreSQL + Auth)]
+    Gemini[Gemini API]
+    Resend[Resend API]
+    LineAPI[LINE Messaging API]
+    GoogleCal[Google Calendar API]
 
-    CDN --> Vercel[Vercel<br/>apps/web<br/>Next.js 15]
-    CDN --> Railway[Railway<br/>apps/api<br/>FastAPI + APScheduler]
+    Users -->|HTTPS| CF
+    CF -->|靜態 HTML/JS/CSS<br/>+ API 轉發| Railway
+    Railway -->|Postgres protocol| Supabase
+    Railway -->|HTTPS| Gemini
+    Railway -->|HTTPS| Resend
+    Railway -->|HTTPS| LineAPI
+    Railway -->|HTTPS| GoogleCal
+    Sentry[Sentry] -.監控.-> Railway
 
-    Vercel -->|HTTPS| Railway
-    Railway -->|Postgres protocol| Supabase[(Supabase Cloud<br/>PostgreSQL + Auth)]
-    Railway -->|HTTPS| Gemini[Gemini API]
-    Railway -->|HTTPS| Resend[Resend API]
+    classDef frontend fill:#e1f5ff
+    classDef backend fill:#f3e5f5
+    classDef data fill:#e8f5e9
+    classDef external fill:#fff3e0
 
-    Sentry[Sentry] -.監控.-> Vercel
-    Sentry -.監控.-> Railway
+    class CF frontend
+    class Railway backend
+    class Supabase data
+    class Gemini,Resend,LineAPI,GoogleCal external
 ```
+
+**v3.0 變更（ADR-013）**：
+- Vercel（Next.js 專優化） → **Cloudflare Pages**（Vite 純靜態）
+- 原因：無 SSR 需求、Vite 產出 static 最佳化、Cloudflare Pages 成本低且 CDN 最快
 
 ---
 
 ## 2. 環境矩陣
 
-| 環境 | 用途 | URL | 資料 | 部署觸發 |
-| :--- | :--- | :--- | :--- | :--- |
-| **local** | 開發 | localhost:3000 / :8000 | Supabase local 或 staging | `pnpm dev` + `uv run` |
-| **staging** | 內部驗證 | staging.synergy-ai.tw / api-staging.synergy-ai.tw | Supabase free project | merge to `main` |
-| **production** | Pilot 教練使用 | app.synergy-ai.tw / api.synergy-ai.tw | Supabase Pro | Git tag `v*.*.*` |
+| 環境 | 用途 | Frontend URL | Backend URL | 資料 | 部署觸發 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **local** | 開發 | localhost:5173（Vite） | localhost:8000 | Supabase local 或 staging | `pnpm dev` + `uv run uvicorn` |
+| **staging** | 內部驗證 | staging.synergy-ai.tw | api-staging.synergy-ai.tw | Supabase staging project | push to `main` |
+| **production** | Pilot 教練 | app.synergy-ai.tw | api.synergy-ai.tw | Supabase Pro | Git tag `v*.*.*` |
 
 ---
 
 ## 3. CI/CD Pipeline
 
-### 3.1 PR 流程（`.github/workflows/pr.yml`）
+### 3.1 Local 開發（Vite）
+
+**啟動前端開發伺服器**：
+```bash
+cd apps/web
+pnpm install  # 或 npm install / bun install，依 .claude/taskmaster-data/package-manager.json
+pnpm dev      # Vite dev server 監聽 localhost:5173
+```
+
+**啟動後端開發伺服器**：
+```bash
+cd apps/api
+uv sync       # 初次或更新依賴
+uv run uvicorn src.main:app --reload --port 8000
+```
+
+**環境檔**（`.env.local`）：
+```bash
+# apps/web/.env.local
+VITE_API_BASE_URL=http://localhost:8000
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJxx...
+
+# apps/api/.env
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_KEY=eyJxx...（service role）
+LLM_API_KEY=sk-xxxx（Gemini）
+LINE_CHANNEL_ACCESS_TOKEN=xxxx
+RESEND_API_KEY=xxxx
+GOOGLE_CALENDAR_CLIENT_ID=xxxx
+SENTRY_DSN=xxxx（可選）
+```
+
+### 3.2 PR 檢查流程（`.github/workflows/pr.yml`）
 
 ```yaml
 name: PR Checks
@@ -47,12 +99,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v2
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -F @synergy/web lint
-      - run: pnpm -F @synergy/web typecheck
-      - run: pnpm -F @synergy/web test
-      - run: pnpm -F @synergy/web build
+      - uses: oven-sh/setup-bun@v1  # 或 pnpm/action-setup，依 PM 設定
+      - run: bun install --frozen-lockfile  # 對應 PM
+      - run: bun run --cwd apps/web lint
+      - run: bun run --cwd apps/web typecheck
+      - run: bun run --cwd apps/web test
+      - run: bun run --cwd apps/web build
 
   backend:
     runs-on: ubuntu-latest
@@ -69,17 +121,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: gitleaks/gitleaks-action@v2
-      - run: pnpm audit --audit-level=high
+      - run: bun audit  # 對應 PM
       - run: uv run --directory apps/api pip-audit
 ```
 
-### 3.2 Merge to main（Staging 部署）
+### 3.3 Merge to main（Staging 部署）
 
-- Vercel 自動從 `main` branch 部署 → `staging.synergy-ai.tw`
-- Railway 自動偵測 `apps/api` 變更 → Staging service
-- Supabase migration 手動執行：`./scripts/migrate.sh staging`
+**Staging 環境自動部署到** `staging.synergy-ai.tw`：
 
-### 3.3 Tag v* → Production
+1. **前端（Cloudflare Pages for Staging）**：
+   - 設定 Cloudflare Pages project 監聽 `main` branch
+   - Build 指令：`cd apps/web && pnpm build`（對應 PM）
+   - Output directory：`apps/web/dist`
+   - 環境變數：
+     ```
+     VITE_API_BASE_URL=https://api-staging.synergy-ai.tw
+     VITE_SUPABASE_URL=https://xxxx.supabase.co
+     VITE_SUPABASE_ANON_KEY=<Secret>
+     ```
+
+2. **後端（Railway Staging）**：
+   - Railway project 監聽 `apps/api` 路徑變更
+   - 自動部署到 staging service
+   - 環境變數在 Railway dashboard 設定（所有 `SUPABASE_*`、`LLM_API_KEY` 等）
+
+3. **資料庫遷移（手動）**：
+   ```bash
+   ./scripts/migrate.sh staging
+   # 或手動在 Supabase dashboard 執行 SQL
+   ```
+
+### 3.4 Tag v* → Production（`.github/workflows/deploy-prod.yml`）
 
 ```yaml
 name: Production Deploy
@@ -88,296 +160,301 @@ on:
     tags: ['v*.*.*']
 
 jobs:
-  deploy-web:
+  deploy-frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-args: --prod
+      - uses: actions/checkout@v4
+      - name: Deploy to Cloudflare Pages
+        run: |
+          cd apps/web
+          bun install --frozen-lockfile
+          bun run build
+          # 使用 wrangler CLI 部署到 Cloudflare Pages（需 API token）
+          npx wrangler pages deploy dist \
+            --project-name=synergy-web \
+            --branch=main
 
-  deploy-api:
+  deploy-backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: bervProject/railway-deploy@main
-        with:
-          service: api-production
-          token: ${{ secrets.RAILWAY_TOKEN }}
+      - uses: actions/checkout@v4
+      - name: Deploy to Railway Production
+        run: |
+          # Railway CLI 部署
+          railway up \
+            --service apps/api \
+            --environment production
 
-  smoke-test:
-    needs: [deploy-web, deploy-api]
+  migrate-db:
+    needs: deploy-backend
+    runs-on: ubuntu-latest
     steps:
-      - run: curl -f https://api.synergy-ai.tw/health
-      - run: pnpm -F @synergy/web playwright test tests/e2e/smoke.spec.ts
+      - uses: actions/checkout@v4
+      - name: Run migrations
+        run: ./scripts/migrate.sh production
+        env:
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 ```
-
-**回滾**：Vercel / Railway UI 一鍵回滾到前一版；或刪除 tag 後重 push 舊版。
 
 ---
 
-## 4. Supabase Migration
+## 4. 部署平台詳述
 
-### 4.1 目錄結構
+### 4.1 Cloudflare Pages（前端 — v3.0 新增）
 
+**為什麼選 Cloudflare Pages（ADR-013）**：
+- Vite 產出純靜態檔案 → Pages 秒級部署
+- CDN 全球加速，延遲最低
+- Pricing：月費 0 NTD（無商用限制）
+- API 轉發至後端（ `/api/*` proxy 到 Railway）
+
+**設定步驟**：
+1. 連結 GitHub repo（Cloudflare → Pages → Connect Git）
+2. 選擇 `main` branch
+3. Build 設定：
+   - Framework：自訂
+   - Build command：`cd apps/web && bun run build`
+   - Build output directory：`apps/web/dist`
+   - Root directory：`/`（不用改）
+4. 環境變數設定在 Pages 設定面板
+5. 自訂域名指向 Cloudflare Pages（DNS）
+
+**自訂域名（DNS）**：
 ```
-apps/api/src/infrastructure/persistence/migrations/
-├── 001_init_schema.sql
-├── 002_add_tenant_id.sql
-├── 003_add_reminders.sql
-└── ...
+app.synergy-ai.tw  CNAME → synergy-web.pages.dev
 ```
 
-### 4.2 執行流程
+**API 轉發設定**（`wrangler.toml` 在 Cloudflare Pages 側）：
+```toml
+# 內部設定，或使用 Cloudflare Workers 作 proxy
+routes = [
+  { pattern = "app.synergy-ai.tw/api/*", zone_name = "synergy-ai.tw" }
+]
+```
 
+或用 Cloudflare Workers 轉發（更簡單）：
+```javascript
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/')) {
+      url.hostname = 'api.synergy-ai.tw';  // 後端 Railway
+      return fetch(new Request(url, request));
+    }
+    // 其他請求走 Pages
+    return fetch(request);
+  }
+};
+```
+
+### 4.2 Railway（後端）
+
+**FastAPI + APScheduler 部署**：
+
+1. 連結 GitHub repo（Railway dashboard）
+2. 選擇 `apps/api` 目錄作為 root
+3. Railway 自動偵測 `pyproject.toml`，設定為 Python project
+4. 啟動指令：`uvicorn src.main:app --host 0.0.0.0 --port $PORT`
+   - Railway 提供 `$PORT` 環境變數
+5. 環境變數：設定所有 `SUPABASE_*`、`LLM_API_KEY` 等
+6. PostgreSQL 可選（用 Supabase，不需要 Railway DB）
+
+**域名**：
+```
+api.synergy-ai.tw  CNAME → xxx.railway.app
+```
+
+或用 Railway 內置域名：`api-prod.up.railway.app`
+
+### 4.3 Supabase（資料庫 + Auth）
+
+**現有設定保持不變**（ADR-003）：
+- Free tier 或 Pro tier
+- PostgreSQL + pgvector + Auth
+- RLS policy（已寫好，MVP 不啟用）
+
+**環境變數（後端）**：
 ```bash
-# 本機
-./scripts/migrate.sh local
-
-# Staging（merge 後手動）
-./scripts/migrate.sh staging
-
-# Production（tag 前手動 + 備份）
-./scripts/backup.sh production
-./scripts/migrate.sh production
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_KEY=eyJ... (service role key)
 ```
 
-### 4.3 規則
-
-- **不可破壞性變更**：add column / add table / add index
-- **破壞性變更**（drop/rename）：分三步
-  1. 新增新欄位 + code 雙寫
-  2. 下一版 deploy 後遷移資料
-  3. 再下一版刪除舊欄位
-
----
-
-## 5. 監控與告警
-
-### 5.1 SLO 目標（MVP Pilot）
-
-| 指標 | SLO | 測量 | 告警閾值 |
-| :--- | :--- | :--- | :--- |
-| API 可用性 | ≥ 95% | UptimeRobot `/health` 1-min | < 95%/小時 |
-| API p95 延遲（非 LLM） | ≤ 500ms | Sentry Performance | > 1s 持續 10min |
-| LLM 成功率 | ≥ 95% | 自訂 metric | < 90%/小時 |
-| Reminder 準時率 | ≥ 95%（±1h） | 自訂 audit | < 90%/日 |
-| 錯誤率 | ≤ 1% | Sentry | > 5% 持續 5min |
-
-### 5.2 監控工具
-
-| 工具 | 用途 | 成本 |
-| :--- | :--- | :--- |
-| Sentry | 錯誤追蹤、APM、前後端統一 | Free 5k events/month |
-| UptimeRobot | 可用性 ping | Free 50 monitor |
-| Supabase Logs | DB 查詢、Auth log | 內建 |
-| Vercel Analytics | Web vitals | Free |
-| Railway Metrics | CPU / RAM / egress | 內建 |
-
-### 5.3 告警通道
-
-- CRITICAL：Email + Telegram bot（觸發 PagerDuty 太重）
-- WARN：Email 每日摘要
-
-### 5.4 SLI 埋點關鍵
-
-- `questionnaire.submit.success_rate`
-- `briefing.generate.latency_p95`
-- `briefing.generate.llm_cost_per_day_ntd`
-- `reminder.dispatch.on_time_rate`
-- `crm.api.p95_latency`
-
----
-
-## 6. 成本控管
-
-### 6.1 月度預算（Pilot 階段）
-
-| 項目 | 預算 (NTD) | 超標告警 |
-| :--- | :--- | :--- |
-| Supabase | 0-800 | 達 Pro 方案額度 |
-| Gemini API | 300 | > 500 NTD 告警 |
-| Vercel | 0 | Hobby plan 限額 |
-| Railway | 500 | > 1,000 NTD 告警 |
-| LINE Messaging API | 800 | Light plan 15k 訊息；若月推播 > 15k 升級 Standard（1,600 NTD） |
-| Resend（備援） | 0 | > 3k 封 |
-| 網域 | 60 | — |
-| **總計** | **< 2,300** | > 2,800 告警 |
-
-### 6.2 LLM 成本控管策略
-
-1. **日預算上限**：Gemini 每日 $0.50 USD，達上限切降級模型
-2. **Token budget per request**：輸出上限 2500 tokens
-3. **Prompt 優化**：簡化 system prompt，避免重複上下文
-4. **快取**：Briefing 一次生成永久存（ADR-009）
-5. **降級策略**：Claude Haiku 4.5（若品質要求升級）
-
-### 6.3 成本儀表板
-
-每週一寄送 Email：上週各服務用量與金額。
-
----
-
-## 7. 備份與災難恢復
-
-### 7.1 備份
-
-| 資料 | 頻率 | 保留 | 方式 |
-| :--- | :--- | :--- | :--- |
-| Supabase DB | 每日自動 | 7 天（Free）/ 30 天（Pro） | Supabase 內建 |
-| 使用者檔案（Storage） | 每日 | 30 天 | Supabase 內建 |
-| 設定（env） | 變更時 | Git + 1Password | 手動 |
-
-### 7.2 RTO / RPO
-
-| 事件 | RTO | RPO |
-| :--- | :--- | :--- |
-| Railway 宕機 | 30 分鐘（切 Fly.io） | 0 |
-| Supabase 宕機 | 4 小時（PG dump 還原至 Neon） | < 24 小時 |
-| Vercel 宕機 | 30 分鐘（切 Cloudflare Pages） | 0 |
-| Gemini 宕機 | 5 分鐘（LiteLLM 切 Claude） | 0 |
-
-### 7.3 災難演練
-
-- 每季一次：模擬 DB 還原（從備份 → staging）
-- 每季一次：模擬金鑰輪替
-- Pilot 開始前一週：演練一次
-
----
-
-## 8. 本機開發環境
-
-### 8.1 必要工具
-
-- Python 3.12 + `uv`
-- Node.js 20 LTS + `pnpm@9`
-- Docker（跑 Supabase local）
-- Supabase CLI
-
-### 8.2 Setup
-
+**環境變數（前端）**：
 ```bash
-git clone https://github.com/{org}/synergy.git
-cd synergy
-cp .env.example .env.local
-# 填入 staging 的金鑰
-
-# Backend
-cd apps/api && uv sync
-
-# Frontend
-cd ../../ && pnpm install
-
-# Supabase local
-npx supabase start
-
-# Run
-pnpm dev  # 同時啟動前後端
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ... (anon key)
 ```
 
-### 8.3 常用指令
+---
 
-| 指令 | 用途 |
-| :--- | :--- |
-| `pnpm dev` | 啟動前後端 |
-| `pnpm test` | 跑所有測試 |
-| `pnpm lint` | Lint + format |
-| `./scripts/migrate.sh local` | 跑 migration |
-| `./scripts/seed-dev-data.py` | 填測試資料 |
+## 5. 環境變數清單（v3.0 Vite 更新）
+
+### 前端（`apps/web`）
+
+| 變數名 | 值範例 | 用途 | 環境 |
+| :--- | :--- | :--- | :--- |
+| `VITE_API_BASE_URL` | http://localhost:8000 | 後端 API 位置 | all |
+| `VITE_SUPABASE_URL` | https://xxxx.supabase.co | Supabase 專案 URL | all |
+| `VITE_SUPABASE_ANON_KEY` | eyJ... | Supabase anon key（Secret） | all |
+| `VITE_COMPLIANCE_MAX_RETRIES` | 3 | 合規檢查重試次數 | all |
+
+### 後端（`apps/api`）
+
+| 變數名 | 值範例 | 用途 | 環境 |
+| :--- | :--- | :--- | :--- |
+| `SUPABASE_URL` | https://xxxx.supabase.co | Supabase 專案 URL | all |
+| `SUPABASE_KEY` | eyJ... | Supabase service role key（Secret） | all |
+| `LLM_API_KEY` | sk-... | Gemini API key（Secret） | all |
+| `LINE_CHANNEL_ACCESS_TOKEN` | U+xxxx | LINE OA token（Secret） | all |
+| `RESEND_API_KEY` | re_xxxx | Resend API key（Secret） | all |
+| `GOOGLE_CALENDAR_CLIENT_ID` | xxxx.apps.googleusercontent.com | OAuth client ID | all |
+| `GOOGLE_CALENDAR_CLIENT_SECRET` | xxxx | OAuth secret（Secret） | all |
+| `SENTRY_DSN` | https://xxxx@xxxx.ingest.sentry.io/yyyy | 錯誤追蹤（可選） | staging / prod |
+| `ENVIRONMENT` | development / staging / production | 執行環境標識 | all |
+| `LOG_LEVEL` | DEBUG / INFO / WARNING | 日誌等級 | all |
 
 ---
 
-## 9. Runbook（常見維運任務）
+## 6. 監控與告警
 
-### 9.1 LLM API 失敗爆量
+### 6.1 Sentry（錯誤追蹤）
 
-1. 開啟 Sentry 確認錯誤類型
-2. 檢查 Gemini console 是否服務中斷
-3. 若是供應商問題 → `LLM_PROVIDER=anthropic` env 切換後 redeploy
-4. 若是我方問題 → 查 prompt / rate limit
+**後端集成**：
+```python
+import sentry_sdk
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    environment=os.getenv("ENVIRONMENT"),
+    traces_sample_rate=0.1
+)
+```
 
-### 9.2 Reminder 沒準時發送
+**前端集成**（react-sentry）：
+```tsx
+import * as Sentry from "@sentry/react";
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN,
+  environment: import.meta.env.MODE,
+  tracesSampleRate: 0.1
+});
+```
 
-1. 檢查 Railway APScheduler 容器是否運行
-2. 查 `/v1/reminders?status=pending&overdue=true`
-3. 若有堆積，手動觸發 `POST /v1/internal/reminders/scan`
-4. 檢查 LINE Messaging API console：是否超限、有被封鎖、webhook 是否可用
-5. 查 `reminders.channel_attempts`：若 line 全部 failed，確認教練是否解除綁定
-6. 若 LINE 整體中斷：設定 `NOTIFICATION_PRIMARY_CHANNEL=email` redeploy，全部走備援
-7. 檢查 Resend console 是否被 block
+### 6.2 重要指標監控
 
-### 9.3 Supabase Free 額度耗盡
-
-1. 升級 Pro（25 USD/mo）
-2. 或：刪除舊 audit log、重生 Briefing 的 JSONB 去冗余
-
-### 9.4 金鑰外洩
-
-1. 立即在對應 console 撤銷金鑰
-2. 產生新金鑰並更新部署平台 env
-3. Redeploy 所有受影響服務
-4. 檢查 log 是否有異常存取
-5. 若涉客戶資料，走 §11 事故回應流程
-
----
-
-## 10. 擴容路徑（Phase 2 準備）
-
-| 階段 | 觸發條件 | 調整 |
+| 指標 | 目標 | 監控位置 |
 | :--- | :--- | :--- |
-| Pilot → Phase 2 | 3 位 → 20 位教練 | Railway Pro、Supabase Pro |
-| Phase 2 → Multi-tenant | 簽第 2 家客戶 | 啟用 RLS tenant 切換；多網域 CDN |
-| Multi-tenant → 跨區 | 美國客戶簽約 | 新增 us-east Supabase instance；GeoDNS |
+| `compliance_check_p95_latency` | ≤ 5s | APScheduler / Sentry |
+| `hitl_queue_depth` | ≤ 10 items | API endpoint + dashboard |
+| `auto_pass_rate` | > 80% | ComplianceLog 統計 |
+| `api_error_rate` | < 1% | Sentry / Railway metrics |
+| `db_connection_pool` | ≥ 5 available | Supabase monitoring |
+
+### 6.3 告警規則
+
+- API error rate > 5% → 30 min 內告警
+- Compliance latency p95 > 5s → 1 hour 內改善
+- Database storage > 80% quota → 立即告警
 
 ---
 
-## 11. 事故回應流程（完整版）
+## 7. 回滾策略
 
-（安全相關見 `10_security.md §11`）
+### 前端回滾（Cloudflare Pages）
 
-### 11.1 嚴重度分級
+1. 在 Cloudflare Pages 設定面板選擇「Deployments」
+2. 選擇之前的正常版本，點「Rollback」
+3. 自動 rollback 至該 commit
 
-| 等級 | 定義 | 通知時限 |
+### 後端回滾（Railway）
+
+1. 在 Railway dashboard 點「Deployments」
+2. 選擇之前的正常版本，點「Redeploy」
+
+### 資料庫回滾（Supabase）
+
+1. 檢查 migration 歷史（`src/infrastructure/db/migrations/`）
+2. 確認回滾 SQL（已附加 `-- ROLLBACK:` 註解）
+3. 在 Supabase SQL editor 手動執行或用 CLI：
+   ```bash
+   supabase migration down
+   ```
+
+---
+
+## 8. 維運檢查清單
+
+### 部署前（Release 前）
+
+- [ ] Staging 環境完全測試通過
+- [ ] 所有 migration 檔已編寫並在 staging 測試
+- [ ] 環境變數已在 prod 設定（不含默認值）
+- [ ] Sentry project 已建立
+- [ ] LINE OA 帳號已審核通過（若需要）
+- [ ] Google Calendar OAuth 已授權
+- [ ] 資料庫備份已排程（Supabase 自動，檢查確認）
+
+### 部署後（Release 後）
+
+- [ ] 前端 static files 已在 CDN 快取（Cloudflare）
+- [ ] 後端服務正常啟動（Railway）
+- [ ] Database migrations 已執行
+- [ ] SEO meta tags 可正確渲染（react-helmet）
+- [ ] LINE 提醒、Email、Google Calendar 整合可用
+- [ ] 完整端到端流程（問卷 → 摘要 → 提醒 → HITL 審核）
+
+### 每週維運檢查
+
+- [ ] 監控儀表板無告警
+- [ ] Sentry 錯誤率 < 1%
+- [ ] 合規檢查 latency p95 < 5s
+- [ ] HITL 隊列深度 < 10
+- [ ] 資料庫存儲 < 80% quota
+- [ ] 教練反饋無重大 BUG 回報
+
+---
+
+## 9. Scaling 規劃（Phase 2）
+
+### 前端 Scaling
+
+- Vite 產出靜態檔案 → 無狀態，Cloudflare CDN 原生支援
+- 預期支援 10,000+ 併發用戶無問題
+
+### 後端 Scaling
+
+1. **單機 APScheduler → Celery（Redis）**（若 reminder 量 > 1,000/hr）
+2. **FastAPI 單機 → Railway auto-scaling**（可配置 max instances）
+3. **資料庫 → Supabase Pro tier + read replicas**（若 QPS > 100）
+
+### 部署調整
+
+- 前端：無變（Cloudflare CDN 自動）
+- 後端：Railway 設定 auto-scaling rules
+- DB：Supabase 升級 tier（成本線性）
+
+---
+
+## 10. 安全設定（Deployment 層）
+
+- [ ] HTTPS everywhere（Cloudflare / Railway 原生）
+- [ ] 環境變數絕不簽入 git（`.env` 在 `.gitignore`）
+- [ ] Supabase RLS policy 預留但未啟用（Phase 2）
+- [ ] API rate limiting 已設（每 IP 100 req/min）
+- [ ] CORS 已限制（只允許 `https://app.synergy-ai.tw`）
+- [ ] Database backup 每日自動（Supabase 內置）
+
+---
+
+## v3.0 部署變更總結（ADR-013）
+
+| 項目 | v2.0（Next.js） | v3.0（React+Vite） |
 | :--- | :--- | :--- |
-| **SEV-1** | 服務完全中斷 / 資料遺失 | < 15 min |
-| **SEV-2** | 核心功能不可用（商談摘要無法生成） | < 1 hour |
-| **SEV-3** | 邊緣功能異常（提醒延遲） | < 4 hours |
-| **SEV-4** | 單一使用者問題 | 下一工作天 |
-
-### 11.2 SEV-1/2 回應步驟
-
-1. **宣告**：Telegram 群組發 `[SEV-1] <summary>`
-2. **成立戰情室**：15 分鐘內聚集負責人
-3. **遏制**：rollback / feature flag 關閉
-4. **溝通**：
-   - 內部：每 30 分鐘更新
-   - 對 Pilot 教練：透過 LINE 群公告
-5. **修復**：熱修 + staging 驗證 + prod 部署
-6. **覆盤**：48 小時內寫 postmortem（`docs/incidents/YYYY-MM-DD-<slug>.md`）
-
----
-
-## 12. 上線前 Checklist
-
-### 技術
-- [ ] 所有 CI check 綠燈
-- [ ] Migration 已跑（staging 驗證）
-- [ ] 環境變數齊全
-- [ ] TLS A 評級
-- [ ] Sentry 接入
-- [ ] UptimeRobot 設定
-
-### 業務
-- [ ] 3 位 Pilot 教練同意書簽妥
-- [ ] 教練 30 分鐘上線訓練完成（含 LINE OA 綁定步驟）
-- [ ] **LINE Official Account 審核通過 + Messaging API channel 可推播**
-- [ ] **3 位 Pilot 教練全部完成 LINE OA 綁定（line_user_id 已寫入 DB）**
-- [ ] LINE 訊息範本審核完成（若使用 push message template）
-- [ ] Privacy Policy + ToS 上線
-- [ ] 問卷題目最終版已鎖定
-- [ ] LLM prompt 迭代 ≥ 3 輪驗證
-
-### 維運
-- [ ] 備份驗證已跑
-- [ ] 告警通道測試
-- [ ] Runbook 已撰寫（§9）
-- [ ] 金鑰已輪替為正式版
+| **部署平台** | Vercel | Cloudflare Pages |
+| **Build 指令** | `next build` | `vite build` |
+| **輸出格式** | SSR 伺服器 | 純靜態 HTML/JS/CSS |
+| **Node.js 需求** | 運行時必需 | 建置時只需 |
+| **啟動時間** | ~3-5s | <1s（無 build） |
+| **環境變數** | `NEXT_PUBLIC_*` | `VITE_*` |
+| **SEO 處理** | next/head | react-helmet-async |
+| **Auth Middleware** | middleware.ts | ProtectedRoute HOC |
+| **成本** | $15-25/月（Vercel） | $0/月 + Railway $5/月 |

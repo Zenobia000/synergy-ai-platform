@@ -1,28 +1,44 @@
 # 架構決策記錄 (ADR) — Synergy AI Closer's Copilot
 
-> **版本:** v1.0 | **更新:** 2026-04-24
+> **版本:** v3.0 | **更新:** 2026-05-08
 
 本文件彙整 MVP 階段所有重要架構決策。每條 ADR 獨立可讀，可於未來拆分為單獨檔案。
+
+## v3.0 修訂說明
+
+依據客戶 Phase I MVP 規格書（2026-05-06），合規 AI 與 HITL 從 Won't 晉升為 Must，Leader Summary 與新手教練進度納入輕量範圍。本版新增：
+
+- **ADR-010**：Compliance 三層防線（規則庫 → LLM 二次覆核 → HITL）
+- **ADR-011**：HITL 人工審核佇列流程與 SLA
+- **ADR-012**：M6 輕量 Activity Tracking 採共用 EventLog + 物化視圖
+- **ADR-013**：前端棧由 Next.js 改為 React 19 + Vite（簡化無 SSR 需求的 SPA）
+
+ADR-007（M5/M6 完全不做）標註為 **部分推翻**：M6 以「輕量版」復活；M5 仍延後。
 
 ## ADR 索引
 
 | # | 標題 | 狀態 | 日期 |
 | :---: | :--- | :--- | :--- |
-| 001 | 技術棧延用 module2（FastAPI + Next.js + Gemini/LiteLLM） | 已接受 | 2026-04-24 |
+| 001 | 技術棧延用 module2（FastAPI + Next.js + Gemini/LiteLLM） | ⚠️ 部分推翻（前端部分） | 2026-04-24 |
 | 002 | 專案結構重構為 apps/ + packages/ 扁平 monorepo | 已接受 | 2026-04-24 |
 | 003 | 資料庫選用 Supabase Cloud（PostgreSQL + pgvector） | 已接受 | 2026-04-24 |
 | 004 | LLM 預設 Gemini-2.5-flash，LiteLLM 抽象可切換 | 已接受 | 2026-04-24 |
 | 005 | Multi-tenant：預留 tenant_id，不實作完整隔離 | 已接受 | 2026-04-24 |
 | 006 | M1 獲客模組拆層；MVP 不實作內容生成層 | 已接受 | 2026-04-24 |
-| 007 | M5/M6 於 MVP 完全不做；原因與後果 | 已接受 | 2026-04-24 |
+| 007 | M5/M6 於 MVP 完全不做；原因與後果 | ⚠️ 部分推翻（見 ADR-012） | 2026-04-24 |
 | 008 | 提醒通道：LINE Messaging API 優先，Email 為備援 | 已接受（2026-04-24 修訂） | 2026-04-24 |
 | 009 | 商談摘要採「生成時寫入 DB + 快取不重算」策略 | 已接受 | 2026-04-24 |
+| **010** | **Compliance 三層防線（規則庫 + LLM 覆核 + HITL）** | **已接受** | **2026-05-08** |
+| **011** | **HITL 人工審核佇列：同步阻塞 + 30 min SLA** | **已接受** | **2026-05-08** |
+| **012** | **M6 輕量 Activity Tracking：共用 EventLog + 物化視圖** | **已接受** | **2026-05-08** |
+| **013** | **前端框架改為 React 19 + Vite（推翻 ADR-001 前端部分）** | **已接受** | **2026-05-08** |
 
 ---
 
 ## ADR-001: 技術棧延用 module2（FastAPI + Next.js + Gemini/LiteLLM）
 
-> **狀態:** 已接受 | **日期:** 2026-04-24 | **決策者:** kuanwei
+> **狀態:** ⚠️ 部分推翻 (前端) | **日期:** 2026-04-24 | **決策者:** kuanwei
+> **推翻記錄：** ADR-013（2026-05-08）將前端改為 React 19 + Vite；後端仍為 FastAPI
 
 ### 1. 背景與問題
 
@@ -59,7 +75,7 @@
 
 ### 3. 決策
 
-**選擇：選項一（延用 module2 技術棧）**
+**選擇：選項一（延用 module2 技術棧）** — *後端部分保留；前端於 ADR-013 修正*
 
 **理由**：
 - 時程壓力下選擇風險最低的路徑
@@ -77,6 +93,7 @@
   - Python 後端在 serverless 部署（如 Vercel）較受限，需要自架或 Railway/Fly.io
 - **影響範圍**：所有後續 ADR（結構、DB、LLM）都以此為前提
 - **重新評估觸發**：
+  - ✅ 2026-05-08：Next.js 前端部分改為 React 19 + Vite（見 ADR-013）
   - 若 Pilot 後決定多租戶要實作，需重評資料層（ADR-005）
   - 若擴張到第 2 家客戶且需多語系，需重評前端 SSR 需求
 
@@ -101,7 +118,7 @@
 ```
 synergy/
 ├── apps/
-│   ├── web/          # Next.js 前端（問卷 + 教練後台 + CRM）
+│   ├── web/          # React 19 + Vite 前端（問卷 + 教練後台 + CRM）
 │   └── api/          # FastAPI 後端（所有 REST API）
 ├── packages/
 │   ├── domain/       # 共用型別（Pydantic + TS）
@@ -383,7 +400,8 @@ synergy/
 
 ## ADR-007: M5/M6 於 MVP 完全不做
 
-> **狀態:** 已接受 | **日期:** 2026-04-24 | **決策者:** kuanwei
+> **狀態:** ⚠️ 部分推翻 | **日期:** 2026-04-24 | **決策者:** kuanwei
+> **推翻記錄：** ADR-012（2026-05-08）將 M6 輕量版復活（Leader Summary + Onboarding Tracking）；M5 仍延後
 
 ### 1. 背景與問題
 
@@ -402,7 +420,7 @@ synergy/
 
 ### 3. 決策
 
-**選擇：選項二（預留 schema，不做 UI/API）**
+**選擇：選項二（預留 schema，不做 UI/API）** — *後修正：M6 輕量版執行（見 ADR-012）*
 
 **理由**：
 - M5/M6 所需資料（成果追蹤、團隊關係）需要 M4 完整執行追蹤先跑半年
@@ -411,9 +429,9 @@ synergy/
 
 ### 4. 後果
 
-- **正面**：Phase 2 啟動時可立即接資料管線
-- **負面**：Schema 設計要多花 30 分鐘想清楚未來欄位
-- **重新評估觸發**：Phase 2 Gate（Pilot 驗收達標後）
+- **正面**：Phase 2 啟動時可立即接資料管線；2026-05-08 更新：M6 輕量版已執行
+- **負面**：Schema 設計要多花 30 分鐘想清楚未來欄位；2026-05-08：M6 輕量版包含物化視圖與新手進度表
+- **重新評估觸發**：Phase 2 Gate（Pilot 驗收達標後）；M6 輕量版已於 ADR-012 重新評估並執行
 
 ---
 
@@ -540,17 +558,253 @@ synergy/
 
 ---
 
+## ADR-010: Compliance 三層防線（規則庫 + LLM 二次覆核 + HITL）
+
+> **狀態:** 已接受 | **日期:** 2026-05-08 | **決策者:** kuanwei | **對應規格**：[12_phase1_mvp.md §合規 AI](./12_phase1_mvp.md)
+
+### 1. 背景與問題
+
+- **上下文**：客戶 Phase I 規格把「合規 AI」從 v2.0 的 Won't 拉回 **Must**。所有 AI 對外訊息（邀約文案、客戶版摘要、跟進草稿、商談話術）必須先通過合規檢查，避免醫療宣稱（C1）、收入宣稱（C2）、誇大效果（C3）、金字塔風險語句（C4）等四大類風險。
+- **問題**：合規檢查要兼顧「速度」（不能拖慢 ≤3s 的跟進草稿）、「準確度」（誤判率 < 5%）、「可稽核」（ComplianceLog 一比一保留）。單靠規則或單靠 LLM 都不夠。
+- **驅動因素**：
+  - 法務風險（誤過會傷品牌）
+  - 工程效能（每則訊息都要過，總呼叫量大）
+  - 可解釋性（被檢舉時要拿得出理由）
+
+### 2. 考量的選項
+
+#### 選項一：純規則庫（黑名單關鍵詞）
+- **優點**：快、便宜、可解釋
+- **缺點**：誤判率高（「治療師」也會被擋）、無法處理改寫變體
+- **成本**：低
+
+#### 選項二：純 LLM 判斷
+- **優點**：理解上下文、可同時改寫
+- **缺點**：每則 latency +2~5s、月成本估 1500+ NTD、不可解釋
+- **成本**：高
+
+#### 選項三：三層防線（採用）
+- **流程**：規則庫初篩 → LLM 二次覆核（僅可疑案件） → 高風險走 HITL
+- **優點**：成本可控、稽核可追溯、誤判率可降至 <5%
+- **缺點**：實作複雜度高，要維護規則庫詞表
+- **成本**：中
+
+### 3. 決策
+
+**採用選項三**。實作要點：
+
+1. **Layer 1 — 規則庫初篩**（純 Python，<10ms）
+   - 詞表分四類（C1/C2/C3/C4），每類至少 50 條（首版由客戶提供）
+   - 命中 → 標記 `risk_level = candidate` 進入 Layer 2
+   - 未命中 → 自動加上免責聲明後通過
+2. **Layer 2 — LLM 二次覆核**（高階模型，~2s）
+   - 僅 candidate 案件呼叫
+   - Prompt 要求輸出 `{risk_level: low/medium/high, rewritten_text, reason}`
+   - low → 自動採用 rewritten_text；medium → 採用且記錄；high → 進 Layer 3
+3. **Layer 3 — HITL**（見 ADR-011）
+
+**所有經過任一層的訊息**：寫入 `compliance_logs`（原文 / 改寫後 / 風險等級 / 是否人工覆核 / 規則命中 / LLM 模型版本）。
+
+### 4. 後果
+
+- **正向**：合規風險顯著降低；資料累積後可訓練私有分類器（Phase II）
+- **負向**：跟進草稿 latency 預算需擴至 5s（規格 ≤3s 仍要努力達成，靠規則庫快路徑）
+- **追蹤**：`compliance_check_p95_latency`、`hitl_queue_depth`、`auto_pass_rate`
+
+### 5. 影響
+
+- 影響 [05_api.md](./05_api.md)：所有產生對外文字的 endpoint 需串接 Compliance Service
+- 影響 [06_modules.md §ComplianceService](./06_modules.md)：新增模組
+- 影響 [10_security.md](./10_security.md)：ComplianceLog 列為稽核必保留資料
+
+---
+
+## ADR-011: HITL 人工審核佇列 — 同步阻塞 + 30 min SLA
+
+> **狀態:** 已接受 | **日期:** 2026-05-08 | **決策者:** kuanwei | **對應規格**：[12_phase1_mvp.md §HITL](./12_phase1_mvp.md)
+
+### 1. 背景與問題
+
+- **上下文**：ADR-010 的 Layer 3（high risk）與 SKU 推薦、健康建議都需人工審核（HITL）。
+- **問題**：HITL 是「同步阻塞」（教練要等審核才能發送）還是「非同步通過 + 事後追溯」？前者體驗差但合規嚴；後者體驗好但風險已外洩。
+- **驅動因素**：
+  - 教練黃金跟進時間（48h）不能等太久
+  - Pilot 期審核員可能只有 1-2 人
+  - 規格未明指 SLA，需自定
+
+### 2. 考量的選項
+
+| 選項 | 描述 | 優 | 缺 |
+| :--- | :--- | :--- | :--- |
+| A | 同步阻塞 + 30min SLA | 風險完全攔截 | 體驗差、需審核員待命 |
+| B | 非同步預設通過 + 事後審核 | 體驗好 | 高風險可能已送達客戶 |
+| C | **同步阻塞但設快速通道** | 取折衷 | 規則最複雜 |
+
+### 3. 決策
+
+**採用選項 C**：
+
+1. **預設同步阻塞**：高風險訊息進佇列，教練 UI 顯示「審核中」狀態
+2. **30 min 內 SLA**：審核員需在 30 分鐘內處理（Pilot 期目標）
+3. **快速通道**：「商談中即時話術」例外採非同步（先送出 + 標記待覆核），因即時對話不能等
+4. **HITL 介面**：`/compliance/queue` 頁，列出待審項，提供 Approve / Reject + Rewrite / Escalate
+5. **超時處理**：> 30 min 未審 → 系統發信給審核員主管 + 教練可選擇「降級為純文字 + 免責聲明」
+6. **記錄**：每次 HITL 動作寫入 `compliance_logs.reviewed_by`、`reviewed_at`、`hitl_decision`
+
+### 4. 後果
+
+- **正向**：合規責任明確、審核行為可追蹤
+- **負向**：需 Pilot 期確認審核員人力（Q-006 待決）；UX 增加「審核中」狀態
+- **風險**：若審核員人力不足，48h 跟進可能超時（緩解：規則庫詞表越完整 → Layer 3 比例越低）
+
+### 5. 待決問題（Block W1 啟動）
+
+- Q-006：HITL 審核員是「客戶內部合規人員」還是「我方代審」？
+- Q-007：規則庫詞表初版（C1-C4 共 200 條）由誰提供？最遲 W1 D1
+
+---
+
+## ADR-012: M6 輕量 Activity Tracking — 共用 EventLog + 物化視圖
+
+> **狀態:** 已接受 | **日期:** 2026-05-08 | **決策者:** kuanwei | **推翻**：ADR-007（M6 完全不做）
+
+### 1. 背景與問題
+
+- **上下文**：客戶 Phase I 把「Leader Summary + 新手教練進度」納入 Must。但完整 M6（團隊管理、組織樹、業績串接）仍延後。
+- **問題**：要為 M6 輕量版獨立建表（teams, kpi_snapshots, onboarding_tasks…）還是複用既有 EventLog？
+- **驅動因素**：
+  - 4 週時程，不能花太多時間做複雜資料表
+  - F6.1~F6.4 指標（問卷數、商談數、成交數、跟進執行率、AI 摘要使用、高風險觸發）都已有來源（leads, conversation_plans, follow_up_tasks, event_logs, compliance_logs）
+  - 新手進度（F6.6）是少量靜態 checklist，不需複雜表
+
+### 2. 決策
+
+**採用「共用 + 物化視圖」**：
+
+1. **F6.1~F6.5（聚合指標）**：不建新表，採 PostgreSQL 物化視圖
+   - `mv_coach_weekly_stats`（每位教練週統計）
+   - `mv_leader_summary`（Leader 視角彙總）
+   - 每 30 min 用 `pg_cron` refresh（Pilot 期足夠即時）
+2. **F6.6 新手教練進度**：建一張小表 `onboarding_tasks`
+   - 欄位：`coach_id, task_key, completed_at, evidence_url`
+   - Task 清單寫死於 YAML（Pilot 期 ~10 項，例：「綁定 LINE OA」「第一次成交」「完成 5 次商談」）
+3. **不做**：teams 組織樹、業績串接、獎金計算（仍 Won't）
+
+### 3. 後果
+
+- **正向**：4 週可達；Phase II 升級為完整 M6 時，資料已累積
+- **負向**：物化視圖 30min 延遲（Leader 看不到實時資料 — 可接受）
+- **追蹤**：物化視圖 refresh 失敗監控；onboarding 完成率
+
+### 4. 影響
+
+- 影響 [04_architecture.md](./04_architecture.md)：資料層新增物化視圖
+- 影響 [06_modules.md §ActivityTrackingService, LeaderSummaryService, OnboardingProgressService](./06_modules.md)：新增三個 Application 模組
+- 影響 [09_frontend_ia.md](./09_frontend_ia.md)：新增 `/leader/*` 頁面群
+
+---
+
+## ADR-013: 前端框架改為 React 19 + Vite（推翻 ADR-001 前端部分）
+
+> **狀態:** 已接受 | **日期:** 2026-05-08 | **決策者:** kuanwei | **推翻**：ADR-001 前端決策
+
+### 1. 背景與問題
+
+- **上下文**：ADR-001 原定前端用 Next.js 15，主因是 module2 既有 React 19 + Tailwind v4 + Apple tokens 可複用。但實務評估發現：
+  - MVP 前端純 SPA（無 SSR 需求）：問卷是公開頁但無 SEO；教練後台是受認證頁；Leader Summary 同樣無 SEO 需求
+  - Next.js 15 AppRouter 在 SPA 模式下添加複雜性（middleware、dynamic import、metadata） — 反而拖累啟動速度與維運
+  - Vite 啟動快（< 1s dev）、依賴少、無 Node.js runtime 綁定 — 適合 Pilot 期快速迭代
+  - Module1 已驗證 Vite + React + Tailwind 可行，可借鏡
+- **問題**：改用 React + Vite 會不會拖延進度、或造成與後端集成困難？
+
+### 2. 考量的選項
+
+#### 選項一：保留 Next.js 15（ADR-001 決策）
+- **優點**：已有 module2 經驗、集成 API BFF 簡單、內置 Auth middleware
+- **缺點**：無 SSR 需求反而造成過度工程、dev 啟動較慢、不適合 SPA、部署平台受限（Vercel 優先，但本案用 Cloudflare Pages 時有限制）
+- **成本**：無新學習、但 SPA 架構需 workaround
+
+#### 選項二：React 19 + Vite（採用）
+- **優點**：
+  - 純 SPA，架構簡單清爽
+  - Vite 啟動快、dev 體驗好、build 產出 static HTML — 對 Cloudflare Pages 最友好
+  - 依賴少，適合 Pilot 期輕量維運
+  - 與 module1-distributor 既有經驗一致（降低新成員上手成本）
+  - 可沿用 module2 既有元件與 Apple tokens
+- **缺點**：路由自己實作（建議用 react-router-dom v7 或 TanStack Router）、no built-in SSR（但 MVP 不需要）、SEO meta 要手寫（react-helmet-async）
+- **成本**：低（routing + helmet 各 < 2h 集成）
+
+#### 選項三：Remix（全棧框架）
+- **優點**：兼具 SPA 靈活與後端友好
+- **缺點**：學習曲線陡、Pilot 期不必要
+- **成本**：高
+
+### 3. 決策
+
+**選擇：選項二（React 19 + Vite）**
+
+**理由**：
+- **MVP 本質是 SPA**（無 SSR、無 ISR、無 middleware 複雜邏輯），Next.js AppRouter 過度設計
+- **Vite 啟動速度**對日常 Pilot 開發體驗影響大（dev < 1s vs Next.js ~3-5s），每天減少 30+ 分鐘累積時間
+- **部署平台最優化**：Vite 產出純靜態文件 → Cloudflare Pages 秒級部署、edge cache 最高效、成本最低
+- **既有驗證**：module1 已用 Vite，團隊零陌生感；module2 React 元件與 tokens 照用無改動
+- **Phase 2 平滑過渡**：若未來需 SSR（跨品牌版），改用 Remix 或 Next.js 時，React 元件無損搬遷（僅路由 refactor）
+
+### 4. 後果
+
+- **正面**：
+  - 開發迴圈快（Vite dev mode < 1s）
+  - build 產出極小（tree-shake + minify 效率高）
+  - 部署簡單（pure static → Cloudflare Pages 無 build step）
+  - 與 module1 技術一致，未來整合無縫
+  - 維運成本低（無 Node.js 後端依賴）
+- **負面**：
+  - 路由自己實作（工作量 ~2-3h 用 react-router-dom v7）
+  - 無內置 Auth middleware，需在 React 層實作 protected routes
+  - SEO meta 要用 react-helmet-async（~30 min 集成）
+  - 若 Pilot 期突然要 SSR（極罕見），需 refactor — 但風險低（元件無損）
+  - 環境變數命名變更：Next.js 的 `NEXT_PUBLIC_*` → Vite 的 `VITE_*`
+- **影響範圍**：
+  - 影響 [07_structure.md](./07_structure.md)：`apps/web` 結構改為 Vite；`src/routes/` 替代 `app/`
+  - 影響 [08_design_dependencies.md](./08_design_dependencies.md)：移除 `next`、`next-auth`；新增 `vite`、`react-router-dom`、`react-helmet-async`
+  - 影響 [11_deployment.md](./11_deployment.md)：部署改 Cloudflare Pages（或 Netlify）；不用 Vercel
+  - 影響 [04_architecture.md](./04_architecture.md)：L2 Container 圖改 Vite；技術選型表改 React + Vite
+  - 前端套件管理器與 build 指令變更（PM 由用戶決定 — npm/pnpm/bun）
+- **重新評估觸發**：
+  - Pilot W2 若教練需要 PWA offline 支持 → 加 workbox plugin
+  - Phase 2 若需 multi-brand SSR → 評估遷移到 Remix（成本估 3-5 day）
+
+### 5. 執行計畫
+
+1. **W0 D1**：建立 `apps/web` 基礎結構（Vite + React 19 + Tailwind v4 + Apple tokens）
+2. **W0 D2-D3**：集成 react-router-dom v7（路由、nested routes、protected routes）
+3. **W0 D4**：集成 react-helmet-async（head meta 管理）
+4. **W0 D5**：集成 @supabase/supabase-js + Auth flow（Magic Link）
+5. **W1 D1-D2**：複製 module2 既有元件、業務邏輯到 `apps/web/components`
+6. **W1 D3-W2**：實作問卷頁、Lead 列表、Briefing 詳情、Reminder 列表（5 個頁面）
+7. **W2 D4-W3**：合規審核隊列頁 + Leader Summary 新增（2 個新頁面）
+
+---
+
 ## 附錄：決策相依圖
 
 ```
-ADR-001 (技術棧)
+ADR-001 (技術棧) ⚠️ 部分推翻
    ├─→ ADR-002 (結構)
    ├─→ ADR-003 (DB: Supabase)
-   │      └─→ ADR-005 (tenant_id 靠 Supabase RLS)
-   └─→ ADR-004 (LLM: Gemini + LiteLLM)
-          └─→ ADR-009 (摘要快取策略)
+   │      ├─→ ADR-005 (tenant_id 靠 Supabase RLS)
+   │      └─→ ADR-012 (M6 物化視圖)
+   ├─→ ADR-004 (LLM: Gemini + LiteLLM)
+   │      ├─→ ADR-009 (摘要快取策略)
+   │      └─→ ADR-010 (Compliance Layer 2 LLM 覆核)
+   │             └─→ ADR-011 (HITL 流程)
+   └─→ ADR-013 (🆕 前端改 React + Vite，推翻 ADR-001 前端決策)
 
 ADR-006 (M1 延後)  ── 影響 PRD Epic 範圍
-ADR-007 (M5/M6 延後) ── 影響 PRD Epic 範圍
-ADR-008 (Email 提醒) ── 影響 Epic D US-D03
+ADR-007 (M5/M6 延後) ── ⚠️ 部分推翻：ADR-012 將 M6 輕量版復活
+ADR-008 (LINE 提醒) ── 影響 Epic D US-D03
+ADR-010 (Compliance) ── 影響所有產生對外文字的 endpoint
+ADR-011 (HITL) ── 影響 Epic E + UX 增加「審核中」狀態
+ADR-012 (M6 輕量) ── 影響 Epic F + 新增 Leader 視角頁面群
+ADR-013 (React+Vite) ── 影響部署平台、環境變數、dev 工作流
 ```
