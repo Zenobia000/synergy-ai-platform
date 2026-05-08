@@ -1,7 +1,7 @@
 # 設計與依賴關係 — Synergy AI Closer's Copilot
 
-> **版本:** v3.0 | **更新:** 2026-05-08
-> **對應架構：** `docs/04_architecture.md` | **對應結構：** `docs/07_structure.md` | **對應決策：** ADR-013（前端改 React + Vite）
+> **版本:** v3.1 | **更新:** 2026-05-08
+> **對應架構：** `docs/04_architecture.md` | **對應結構：** `docs/07_structure.md` | **對應決策：** ADR-003、ADR-015、ADR-016、ADR-017、ADR-018
 
 ---
 
@@ -119,7 +119,7 @@ classDiagram
 
 ## 3. 技術依賴清單
 
-### 3.1 前端（`apps/web` — v3.0 改為 React + Vite）
+### 3.1 前端（`apps/web` — React 19 + Vite）
 
 | 套件 | 版本 | 用途 | 理由 |
 | :--- | :--- | :--- | :--- |
@@ -130,7 +130,8 @@ classDiagram
 | react-router-dom | ^7.0 | 路由 | ADR-013：nested routes + data loaders |
 | tailwindcss | ^4.0 | CSS | 既有 Apple tokens |
 | @tanstack/react-query | ^5 | API 狀態管理 | 快取 + 重打 + optimistic update |
-| @supabase/supabase-js | ^2 | Auth + Realtime | ADR-003 |
+| ~~@supabase/supabase-js~~ | **❌ 移除** | ~~Auth + Realtime~~ | **ADR-015：改為帳密 + JWT** |
+| **axios** | **^1.7** | **HTTP client** | **ADR-015：取代 Supabase client** |
 | react-helmet-async | ^2 | 動態 SEO meta | ADR-013：取代 Next.js next/head |
 | zod | ^3 | schema 驗證 | 與 Pydantic 概念一致 |
 | @hookform/resolvers | ^3 | 表單 | 問卷複雜表單 |
@@ -138,23 +139,12 @@ classDiagram
 | lucide-react | latest | Icon | 輕量 |
 | date-fns | ^3 | 時間 | 比 moment 輕 |
 
-**ADR-013 移除**（來自 Next.js）：
-- `next`
-- `next-auth`（改用 Supabase Auth）
+**移除（v3.0）取代品**：
+- `next` ← 改 Vite
+- `next-auth` ← 改 bcrypt + JWT
+- `@supabase/supabase-js` ← 改 axios + 自建認證
 
-**環境變數格式變更**（ADR-013）：
-- Next.js: `NEXT_PUBLIC_API_URL` → Vite: `VITE_API_BASE_URL`
-- Next.js: `NEXT_PUBLIC_SUPABASE_URL` → Vite: `VITE_SUPABASE_URL`
-
-**Build 指令變更**（ADR-013）：
-
-| 指令 | Next.js | Vite |
-| :--- | :--- | :--- |
-| 開發 | `next dev` | `vite` |
-| 建置 | `next build` | `vite build` |
-| 預覽 | `next start` | `vite preview` |
-
-### 3.2 後端（`apps/api`）
+### 3.2 後端（`apps/api` — FastAPI + PostgreSQL）
 
 | 套件 | 版本 | 用途 | 理由 |
 | :--- | :--- | :--- | :--- |
@@ -162,19 +152,33 @@ classDiagram
 | uvicorn | ^0.30 | ASGI server | — |
 | pydantic | ^2.9 | 資料驗證 | Pydantic v2 更快 |
 | pydantic-settings | ^2 | 配置 | 環境變數管理 |
-| supabase | ^2 | Client | ADR-003 |
+| ~~supabase~~ | **❌ 移除** | ~~Database Client~~ | **ADR-003：改為 PostgreSQL + SQLAlchemy** |
+| **asyncpg** | **^0.29** | **Async PostgreSQL driver** | **ADR-003：FastAPI async 相容** |
+| **sqlalchemy[asyncio]** | **^2.0** | **ORM** | **ADR-003：取代 Supabase SDK** |
+| **alembic** | **^1.13** | **Database migrations** | **ADR-003：版本管理** |
+| **bcrypt** | **^4.0** | **密碼雜湊** | **ADR-015：PASSWORD hash（cost=12）** |
+| ~~python-jose~~ | **改為** | **JWT library** | **ADR-015：改為 PyJWT + cryptography** |
+| **PyJWT** | **^2.8** | **JWT 簽發驗證** | **ADR-015** |
+| **cryptography** | **^42** | **加密** | ADR-015：PyJWT 依賴 |
 | litellm | ^1.50 | LLM 抽象 | ADR-004 |
-| line-bot-sdk | ^3 | LINE Messaging API（主通道）| ADR-008 |
-| resend | ^2 | Email（備援通道）| ADR-008 |
+| line-bot-sdk | ^3 | LINE Messaging API（主）| ADR-016：主通道 |
+| **heyoo** | **^0.0.7** | **WhatsApp Business API** | **ADR-016：簡化 WhatsApp 集成** |
+| resend | ^2 | Email（備援）| ADR-016：最終備援 |
 | apscheduler | ^3.10 | 排程 | 單機夠用 |
-| google-auth-oauthlib | ^1.2 | Google Calendar OAuth | ADR-012：日程整合 |
-| google-auth-httplib2 | ^0.2 | Google Calendar API | ADR-012 |
+| google-auth-oauthlib | ^1.2 | Google Calendar OAuth | — |
+| google-auth-httplib2 | ^0.2 | Google Calendar API | — |
 | structlog | ^24 | 結構化日誌 | JSON 輸出 |
 | httpx | ^0.27 | HTTP client | async |
 | sentry-sdk | ^2 | 錯誤追蹤 | — |
-| python-jose | ^3 | JWT 解碼 | Supabase JWT |
-| pyyaml | ^6 | 計分規則 YAML | — |
-| pydantic-yaml | ^1 | Pydantic YAML 支持 | 合規詞表（ADR-010） |
+| pyyaml | ^6 | 計分規則 YAML | 仍用於靜態規則 |
+| **pgvector** | **^0.2** | **PostgreSQL vector type** | **ADR-017：embedding 儲存與查詢** |
+| **google-cloud-secret-manager** | **^2** | **GCP Secret Manager** | **ADR-018：部署秘密管理** |
+| **google-cloud-storage** | **^2** | **GCP Cloud Storage** | **ADR-018：檔案存儲** |
+| **google-cloud-logging** | **^3** | **GCP Cloud Logging** | **ADR-018：日誌彙集** |
+
+**移除**：
+- `supabase` ← SQLAlchemy + asyncpg 取代
+- `python-jose` ← PyJWT 取代
 
 ### 3.3 開發依賴
 
@@ -192,11 +196,11 @@ classDiagram
 
 ### 3.4 LLM 供應商
 
-| 供應商 | 模型 | 用途 | 月成本估（Pilot） |
+| 供應商 | 模型 | 用途 | 成本估（Pilot） |
 | :--- | :--- | :--- | :--- |
-| Google | gemini-2.5-flash（預設） | 問卷摘要 + 商談摘要 + 合規 Layer 2 | 50-200 NTD |
-| Anthropic | claude-haiku-4-5（備援） | 成本超標時降級；合規高準度版本 | — |
-| Anthropic | claude-opus-4-6（品質備援） | Pilot 若品質不足切換 | 500+ NTD |
+| Google | gemini-2.5-flash（預設） | 摘要 + 商談 + 合規 Layer 2 + embedding | 50-200 NTD |
+| Anthropic | claude-haiku-4-5（備援） | 成本超標時降級；embedding 備援 | — |
+| Anthropic | claude-opus-4-6（品質） | Pilot 若品質不足切換 | 500+ NTD |
 
 ---
 
@@ -204,11 +208,11 @@ classDiagram
 
 | 原則 | 檢核 | 實踐位置 |
 | :--- | :--- | :--- |
-| **S** 單一職責 | 每個 Service 一個 Bounded Context | `apps/api/src/application/*` 各一檔；前端 routes 各一頁面檔 |
-| **O** 開放封閉 | LLM / Channel / Compliance 抽象可擴充 | `LLMAdapter`、`NotificationChannel`、`ComplianceLayer` Protocol |
-| **L** 里氏替換 | LiteLLMAdapter、ResendEmailChannel、RuleEngine 可被測試替身取代 | 測試 fixture；VCR.py 錄製 |
+| **S** 單一職責 | 每個 Service 一個 Bounded Context；SemanticMatcher 純函式 | `apps/api/src/application/*` 各一檔；`semantic_matcher.py` 無副作用 |
+| **O** 開放封閉 | LLM / Channel / Compliance / Auth 抽象可擴充 | `LLMAdapter`、`NotificationChannel`、`ComplianceLayer`、`PasswordAuthService` Protocol |
+| **L** 里氏替換 | LiteLLMAdapter、NotificationChannel、PasswordAuthService 可被測試替身取代 | 測試 fixture；VCR.py 錄製 |
 | **I** 介面隔離 | Adapter 介面只暴露必要方法 | `LLMAdapter.complete()`、`ComplianceService.check()` 單一方法 |
-| **D** 依賴反轉 | Application 依賴介面，不直接 import SDK | `ReminderService` 收 `NotificationChannel`；`ComplianceService` 收 `RuleEngine` + `LLMAdapter` |
+| **D** 依賴反轉 | Application 依賴介面，不直接 import SDK；ComplianceService 依賴 SemanticMatcher interface | `ReminderService` 收 `NotificationChannel`；`ComplianceService` 收 `RuleEngine` + `SemanticMatcher` |
 
 ---
 
@@ -216,7 +220,7 @@ classDiagram
 
 | 模式 | 使用處 | 目的 |
 | :--- | :--- | :--- |
-| **Repository** | `infrastructure/persistence/repositories/*` | 封裝 Supabase 存取 |
+| **Repository** | `infrastructure/persistence/repositories/*` | 封裝 PostgreSQL 存取 |
 | **Adapter** | `LLMAdapter`、`NotificationChannel` | 抽象外部服務 |
 | **State Machine** | `LeadStatusMachine`、Reminder status flow | Lead/Reminder 狀態轉換規則 |
 | **Strategy** | 計分規則 YAML + `ScoringEngine`；合規詞表 + RuleEngine | 規則可版本替換 |
@@ -283,101 +287,152 @@ classDiagram
 
 ---
 
-## v3.0 Vite 切換補丁（2026-05-08）
+## 7. Vite 與 API 通信（ADR-013）
 
-### 主要變更
-
-1. **前端框架**：Next.js 15 → React 19 + Vite（ADR-013）
-2. **路由庫**：App Router → react-router-dom v7
-3. **Build 產出**：SSR 伺服器 → 純靜態 HTML/JS/CSS
-4. **部署**：Vercel → Cloudflare Pages（或 Netlify）
-5. **環境變數**：`NEXT_PUBLIC_*` → `VITE_*`
-6. **SEO/Meta**：next/head → react-helmet-async
-7. **Auth Middleware**：Next.js middleware.ts → React ProtectedRoute HOC
-8. **後端無變化**：FastAPI + uv 保持不變（ADR-001 後端部分）
-
-### 套件遷移對照
-
-| 用途 | 移除（Next.js） | 新增（Vite） | 用途 |
-| :--- | :--- | :--- | :--- |
-| 框架 | next@15 | — | Next.js 不再需要 |
-| 路由 | next/router | react-router-dom@7 | 客戶端路由 |
-| SEO | next/head | react-helmet-async@2 | 動態 meta tags |
-| 認證 | next-auth（optional） | @supabase/supabase-js | Supabase Magic Link |
-| 環境變數 | dotenv（implicit） | vite 內置 | VITE_* 前綴自動讀取 |
-
-### 新增配置檔
-
-- `vite.config.ts` — Vite + React 設定
-- `apps/web/.env.example` — 環境變數範本
-
-### 舊 Next.js 配置移除
-
-- `next.config.mjs`
-- `next.config.js`（如有）
-- `.vercelignore`（部署改為 Cloudflare Pages）
-
-### 開發 DX 改善（ADR-013 目標）
-
-| 指標 | Next.js | Vite | 改善 |
-| :--- | :--- | :--- | :--- |
-| Dev 啟動時間 | ~3-5s | <1s | **60-80% 更快** |
-| HMR 更新 | ~500ms | ~100ms | **5x 更快** |
-| Build 時間 | ~45s | ~15s | **67% 更快** |
-| 部署時間 | ~60s (Vercel) | ~10s (Pages) | **83% 更快** |
-| Node.js runtime 依賴 | 必需 | 無（純靜態） | **部署更靈活** |
-
----
-
-## 7. 多租戶預留（ADR-005）
-
-雖 MVP 不實作完整 multi-tenant，但架構預留以下欄位與 API：
-
-### 後端 Schema
-
-所有核心表新增 `tenant_id`（UUID, NOT NULL, default='synergy'）：
-- `leads.tenant_id`
-- `questionnaires.tenant_id`
-- `coaches.tenant_id`
-- `compliance_logs.tenant_id`
-- 等
-
-### 前端組態
-
-環境變數可預留 `VITE_TENANT_ID`（可選，目前固定 'synergy'）
-
-### Phase 2 啟用時
-
-1. 啟用 Supabase RLS policy（已寫好但未啟用）
-2. 新增前端 Tenant Selector UI
-3. API 自動篩選 `where tenant_id = current_tenant`
-
----
-
-## 8. 合規 Vite 環境變數（ADR-010/013）
+### 環境變數（Vite）
 
 ```bash
 # apps/web/.env.local（開發）
 VITE_API_BASE_URL=http://localhost:8000
-VITE_SUPABASE_URL=https://xxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJxxxx...
-VITE_COMPLIANCE_MAX_RETRIES=3
+VITE_GEMINI_MODEL=gemini-2.5-flash
+VITE_ENVIRONMENT=development
 
-# 部署平台（Cloudflare Pages 環境變數）
-VITE_API_BASE_URL=https://api.synergy-ai.tw
-VITE_SUPABASE_URL=https://xxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJxxxx...（Secret）
+# Vite 自動 prefix 讀取 VITE_*
+```
+
+### API 客戶端封裝
+
+```ts
+// apps/web/src/lib/api-client.ts
+import axios from 'axios'
+
+const client = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL,
+  withCredentials: true,  // 含 JWT cookie
+})
+
+client.interceptors.response.use(
+  (res) => res.data,  // 解包 envelope
+  (err) => Promise.reject(err.response?.data?.error || err)
+)
+
+export default client
 ```
 
 ---
 
-## 9. 性能目標
+## ✨ v3.1 補丁（2026-05-08）
 
-| 指標 | 目標 | 現況（預測） | 備註 |
-| :--- | :--- | :--- | :--- |
-| 首次載入 (FCP) | ≤ 1.5s | ~1.2s（Vite 優化） | Cloudflare CDN 助力 |
-| 互動就緒 (TTI) | ≤ 2s | ~1.8s | React 19 + code split |
-| 合規檢查 p95 latency | ≤ 5s | ~3s（Layer 1 快路）| ADR-010 目標 |
-| 商談摘要生成 | ≤ 30s | ~8-15s | 後台任務 |
-| API 回應時間 p95 | ≤ 500ms | ~200ms | FastAPI 效率 |
+### 認證與依賴變更（ADR-015）
 
+**移除**：
+- Supabase Client：`@supabase/supabase-js`
+- Magic Link / OTP：不需 Resend（仍用於其他郵件）
+
+**新增**：
+- `bcrypt ^4`（密碼雜湊，cost=12）
+- `PyJWT ^2.8`（JWT 簽發與驗證）
+- `cryptography ^42`（加密基礎）
+- FE：`axios ^1.7`（HTTP client 統一用 axios）
+
+**後端新環境變數**：
+- `BCRYPT_COST=12`
+- `PASSWORD_MIN_LENGTH=10`
+- `JWT_SECRET=<強密鑰>`
+- `JWT_ALGORITHM=HS256`
+- `JWT_ACCESS_EXPIRY=3600` (1h)
+- `JWT_REFRESH_EXPIRY=604800` (7d)
+
+### DB 與依賴變更（ADR-003）
+
+**移除**：
+- `supabase` — Supabase Python SDK
+
+**新增**：
+- `asyncpg ^0.29` — Async PostgreSQL driver
+- `sqlalchemy[asyncio] ^2.0` — ORM
+- `alembic ^1.13` — Migration 工具
+
+**後端新環境變數**：
+- `DATABASE_URL=postgresql+asyncpg://synergy:synergy@localhost:5432/synergy`
+- `SQLALCHEMY_LOG_SQL=false`（開發時可 true）
+
+### 通知通道擴充（ADR-016）
+
+**新增**：
+- `heyoo ^0.0.7` — WhatsApp Business API wrapper
+
+**後端新環境變數**：
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_VERIFY_TOKEN`
+- `WHATSAPP_BUSINESS_ACCOUNT_ID` (可選)
+
+### 規則庫 DB 化（ADR-017）
+
+**新增**：
+- `pgvector ^0.2` — PostgreSQL vector 型別與操作
+
+**後端新環境變數**：
+- `EMBEDDING_MODEL=models/embedding-001` (Gemini)
+- `EMBEDDING_DIMENSION=768`
+- `SEMANTIC_SIMILARITY_THRESHOLD=0.85`
+
+### GCP 部署（ADR-018）
+
+**新增**：
+- `google-cloud-secret-manager ^2`
+- `google-cloud-storage ^2`
+- `google-cloud-logging ^3`
+
+**後端新環境變數**：
+- `GCP_PROJECT_ID`
+- `GCP_REGION=asia-east1`
+- `SECRET_MANAGER_PREFIX=synergy-`
+- `GOOGLE_APPLICATION_CREDENTIALS` (Cloud Run IAM 注入)
+
+### 本地開發（Docker）
+
+**docker-compose.yml**：
+```yaml
+version: "3.8"
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: synergy
+      POSTGRES_PASSWORD: synergy
+      POSTGRES_DB: synergy
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synergy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+```
+
+### 環境變數對照（本地 vs Cloud Run）
+
+| 變數 | 本地開發 | Cloud Run |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | `postgresql+asyncpg://...@localhost:5432/...` | Cloud SQL Auth Proxy 或 Managed Connection |
+| `JWT_SECRET` | 本地測試金鑰 | Secret Manager `synergy-jwt-secret` |
+| `BCRYPT_COST` | 12 | 同 |
+| `WHATSAPP_*` | `.env` 本地 | Secret Manager `synergy-whatsapp-*` |
+| `GCP_PROJECT_ID` | (skip 本地) | Cloud Run 自動注入 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | (skip 本地) | Cloud Run IAM 注入 |
+
+---
+
+**版本履歷**
+
+| 版本 | 日期 | 變更 |
+| :--- | :--- | :--- |
+| v3.0 | 2026-05-08 | 初版（Supabase + Next.js 依賴） |
+| **v3.1** | **2026-05-08** | **⚠️ 新增 bcrypt + PyJWT + SQLAlchemy + asyncpg + pgvector + WhatsApp + GCP 服務；移除 Supabase；FE 改用 axios** |

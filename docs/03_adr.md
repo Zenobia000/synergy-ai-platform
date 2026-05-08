@@ -1,810 +1,703 @@
 # 架構決策記錄 (ADR) — Synergy AI Closer's Copilot
 
-> **版本:** v3.0 | **更新:** 2026-05-08
+> **版本:** v3.1 | **更新:** 2026-05-08 | **最後修訂**：五項重大架構調整（DB、認證、通知、規則庫、部署）
 
 本文件彙整 MVP 階段所有重要架構決策。每條 ADR 獨立可讀，可於未來拆分為單獨檔案。
 
-## v3.0 修訂說明
+## v3.1 修訂說明（2026-05-08）
 
-依據客戶 Phase I MVP 規格書（2026-05-06），合規 AI 與 HITL 從 Won't 晉升為 Must，Leader Summary 與新手教練進度納入輕量範圍。本版新增：
+⚠️ **五項重大架構翻轉**（客戶決定）：
 
-- **ADR-010**：Compliance 三層防線（規則庫 → LLM 二次覆核 → HITL）
-- **ADR-011**：HITL 人工審核佇列流程與 SLA
-- **ADR-012**：M6 輕量 Activity Tracking 採共用 EventLog + 物化視圖
-- **ADR-013**：前端棧由 Next.js 改為 React 19 + Vite（簡化無 SSR 需求的 SPA）
+- **ADR-003 翻轉**：❌ Supabase Cloud → ✅ **本地 Container PostgreSQL 17 + pgvector；部署用 GCP Cloud SQL**
+- **ADR-014 廢棄**：❌ Magic Link 認證移除 → ✅ **新增 ADR-015：系統管理員後台建用戶 + 帳密登入**
+- **新增 ADR-016**：通知通道擴充至 **LINE + WhatsApp + Email** 三通道（Fallback 順序）
+- **新增 ADR-017**：規則庫從 YAML 升級為 **資料庫 + pgvector 向量語意比對**
+- **新增 ADR-018**：部署平台改為 **GCP（Cloud Run + Cloud SQL + Cloud Storage + Cloud CDN）**
 
-ADR-007（M5/M6 完全不做）標註為 **部分推翻**：M6 以「輕量版」復活；M5 仍延後。
+**模組數**：18 → ~21；**ADR**：14 → 18；**API 端點**：~48 → ~60+
+
+---
 
 ## ADR 索引
 
 | # | 標題 | 狀態 | 日期 |
 | :---: | :--- | :--- | :--- |
-| 001 | 技術棧延用 module2（FastAPI + Next.js + Gemini/LiteLLM） | ⚠️ 部分推翻（前端部分） | 2026-04-24 |
+| 001 | 技術棧延用 module2（FastAPI + React 19 + Vite + Gemini/LiteLLM） | ⚠️ 部分推翻 | 2026-04-24 |
 | 002 | 專案結構重構為 apps/ + packages/ 扁平 monorepo | 已接受 | 2026-04-24 |
-| 003 | 資料庫選用 Supabase Cloud（PostgreSQL + pgvector） | 已接受 | 2026-04-24 |
+| **003** | **❌ Supabase Cloud → ✅ 本地 PostgreSQL 17 + pgvector；GCP Cloud SQL 部署** | **⚠️ 翻轉（v3.1）** | **2026-05-08** |
 | 004 | LLM 預設 Gemini-2.5-flash，LiteLLM 抽象可切換 | 已接受 | 2026-04-24 |
 | 005 | Multi-tenant：預留 tenant_id，不實作完整隔離 | 已接受 | 2026-04-24 |
 | 006 | M1 獲客模組拆層；MVP 不實作內容生成層 | 已接受 | 2026-04-24 |
-| 007 | M5/M6 於 MVP 完全不做；原因與後果 | ⚠️ 部分推翻（見 ADR-012） | 2026-04-24 |
-| 008 | 提醒通道：LINE Messaging API 優先，Email 為備援 | 已接受（2026-04-24 修訂） | 2026-04-24 |
+| 007 | M5/M6 於 MVP 完全不做；原因與後果 | ⚠️ 部分推翻 | 2026-04-24 |
+| 008 | 提醒通道：LINE Messaging API 優先，Email 為備援 | ⚠️ 升級（見 ADR-016） | 2026-04-24 |
 | 009 | 商談摘要採「生成時寫入 DB + 快取不重算」策略 | 已接受 | 2026-04-24 |
-| **010** | **Compliance 三層防線（規則庫 + LLM 覆核 + HITL）** | **已接受** | **2026-05-08** |
-| **011** | **HITL 人工審核佇列：同步阻塞 + 30 min SLA** | **已接受** | **2026-05-08** |
-| **012** | **M6 輕量 Activity Tracking：共用 EventLog + 物化視圖** | **已接受** | **2026-05-08** |
-| **013** | **前端框架改為 React 19 + Vite（推翻 ADR-001 前端部分）** | **已接受** | **2026-05-08** |
+| 010 | Compliance 三層防線（規則庫 + LLM 覆核 + 教練決策） | 已接受 | 2026-05-08 |
+| 011 | ⚠️ 教練即審核者，無外部 Reviewer（v3.0.1 修訂） | ⚠️ 修訂 | 2026-05-08 |
+| 012 | M6 輕量 Activity Tracking：共用 EventLog + 物化視圖 | 已接受 | 2026-05-08 |
+| 013 | 前端框架改為 React 19 + Vite（推翻 ADR-001 前端部分） | 已接受 | 2026-05-08 |
+| **014** | **❌ Magic Link 認證（已廢棄 v3.1）** | **⚠️ 廢棄** | **2026-05-08** |
+| **015** | **✨ 系統管理員後台建用戶 + 帳密登入（取代 ADR-014）** | **新增** | **2026-05-08** |
+| **016** | **✨ 通知通道擴充至 LINE/WhatsApp/Email（升級 ADR-008）** | **新增** | **2026-05-08** |
+| **017** | **✨ 規則庫 DB 化 + pgvector 語意比對（升級 ADR-010）** | **新增** | **2026-05-08** |
+| **018** | **✨ 部署平台 GCP Cloud Run + Cloud SQL（修訂 ADR-013）** | **新增** | **2026-05-08** |
 
 ---
 
-## ADR-001: 技術棧延用 module2（FastAPI + Next.js + Gemini/LiteLLM）
+## ADR-001 ~ ADR-013
 
-> **狀態:** ⚠️ 部分推翻 (前端) | **日期:** 2026-04-24 | **決策者:** kuanwei
-> **推翻記錄：** ADR-013（2026-05-08）將前端改為 React 19 + Vite；後端仍為 FastAPI
+（參見上版本文件，維持不變。只在 ADR-003、ADR-008、ADR-013 處加上 v3.1 修訂註記）
 
-### 1. 背景與問題
+### ADR-003 補充 v3.1 修訂
 
-- **上下文**：repo 已有 `modules/module2-questionnaire`（FastAPI + React 19 + Tailwind v4 + Apple tokens）作為問卷 POC，`modules/module1-distributor`（n8n + FastAPI + Vite）作為貼文自動化 POC。
-- **問題**：MVP 要在 6-8 週交付 4 功能閉環，要選一個技術基礎。
-- **驅動因素/約束**：
-  - 時程緊（8 週含 Pilot）
-  - 單人開發或最多 2 人，不能有重學習成本
-  - 需要 LLM 整合能力與可切換彈性
-  - Python 生態內有 `python-docx`、問卷計分邏輯等既有累積
+> **原決策（v3.0）**：Supabase Cloud（PostgreSQL + pgvector + Auth + RLS）
+> **⚠️ v3.1 翻轉**：本地 Container PostgreSQL 17 + pgvector；GCP Cloud SQL 生產部署
 
-### 2. 考量的選項
+詳見 **ADR-018**。
 
-#### 選項一：延用 module2 技術棧
-- **描述**：FastAPI (uv) + Next.js 15/React + Gemini via LiteLLM + PostgreSQL
-- **優點**：
-  - 起步最快、PoC 已驗證可跑
-  - 既有 Apple 風格 UI 可直接延伸
-  - Python + FastAPI 生態健全
-- **缺點**：Next.js 不是 SSR-first，但 MVP 簡單夠用
-- **成本/複雜度**：低
+### ADR-008 補充 v3.1 升級
 
-#### 選項二：麥肯錫推薦 Next.js 15 + Supabase + Claude Opus 4.6
-- **描述**：整包重做 SaaS 平台技術棧
-- **優點**：一步到位支援多租戶
-- **缺點**：多 2-3 週開發成本、Claude 月費高
-- **成本/複雜度**：中-高
+> **原決策（v3.0）**：LINE 優先、Email 備援
+> **✅ v3.1 升級**：LINE 優先、WhatsApp 次選、Email 備援（三通道 Fallback）
 
-#### 選項三：Airtable + Tally + Make + Claude（極速版）
-- **描述**：低程式碼
-- **優點**：3 週跑完、月費 < 5,000 NTD
-- **缺點**：未來遷移成本極高、與現有 repo 脫鉤、資料所有權弱
-- **成本/複雜度**：短期最低、長期最高
+詳見 **ADR-016**。
 
-### 3. 決策
+### ADR-013 補充（無修訂）
 
-**選擇：選項一（延用 module2 技術棧）** — *後端部分保留；前端於 ADR-013 修正*
-
-**理由**：
-- 時程壓力下選擇風險最低的路徑
-- LiteLLM 抽象層讓 LLM 供應商可未來切換，不鎖死
-- 既有 UI 元件與 Python 問卷邏輯可直接複用
-- 擴張到 multi-tenant 時不需改語言與框架，只需加抽象層
-
-### 4. 後果
-
-- **正面**：
-  - Week 1 即可開始實作 Epic A（問卷）而非基礎建設
-  - 與現有 Apple UI tokens 無縫銜接
-- **負面**：
-  - Next.js 不是當前最熱門選擇，招募新成員時需說明理由
-  - Python 後端在 serverless 部署（如 Vercel）較受限，需要自架或 Railway/Fly.io
-- **影響範圍**：所有後續 ADR（結構、DB、LLM）都以此為前提
-- **重新評估觸發**：
-  - ✅ 2026-05-08：Next.js 前端部分改為 React 19 + Vite（見 ADR-013）
-  - 若 Pilot 後決定多租戶要實作，需重評資料層（ADR-005）
-  - 若擴張到第 2 家客戶且需多語系，需重評前端 SSR 需求
+前端技術棧（React 19 + Vite）維持不變。部署平台改為 GCP 見 **ADR-018**。
 
 ---
 
-## ADR-002: 專案結構重構為 apps/ + packages/ 扁平 monorepo
+## ADR-014: ❌ Magic Link 認證（v3.1 廢棄）
 
-> **狀態:** 已接受 | **日期:** 2026-04-24 | **決策者:** kuanwei
+> **原狀態:** 已接受（v3.0.1） | **廢棄狀態:** ⚠️ 已廢棄（v3.1，2026-05-08）| **推翻原因:** 客戶決定採簡單帳密登入 + 後台管理員建用戶
 
-### 1. 背景與問題
+### 原決策概述
 
-- **上下文**：現有 `modules/module1-distributor/` 與 `modules/module2-questionnaire/` 各自獨立，有自己的 frontend/backend/docs，無共用層。
-- **問題**：MVP 要把問卷+商談摘要+CRM+提醒整合成「單一教練版成交副駕駛」。若繼續 `modules/` 切分，共用 TypeScript 型別、Pydantic schema、LLM prompt 會困難。
-- **驅動因素/約束**：
-  - 使用者允許重構結構
-  - module1 與 module2 當參考，不強制延用
-  - 未來要加 module3/module4（合規、多語系）需明確擴展路徑
+v3.0.1 採 Supabase Magic Link + JWT，教練無需記密碼，每次登入自動寄送 Magic Link。
 
-### 2. 考量的選項
+### v3.1 廢棄原因
 
-#### 選項一：扁平化 apps/ + packages/
-```
-synergy/
-├── apps/
-│   ├── web/          # React 19 + Vite 前端（問卷 + 教練後台 + CRM）
-│   └── api/          # FastAPI 後端（所有 REST API）
-├── packages/
-│   ├── domain/       # 共用型別（Pydantic + TS）
-│   ├── llm/          # LiteLLM 抽象 + prompt 模板
-│   └── ui/           # 共用 React 元件（Apple tokens）
-├── modules/          # 舊參考（只讀、不進新開發）
-│   ├── module1-distributor/
-│   └── module2-questionnaire/
-└── docs/
-```
+1. **簡化管理**：Magic Link 依賴 Resend Email 穩定性與額度，無法精準控制
+2. **教練 UX 改善**：帳密登入（首次由 admin 初設）比每次郵件等待更快
+3. **成本考量**：移除 Resend 依賴，減少第三方服務
+4. **後續簡化**：帳密支援「密碼重置」與「首次強制改密碼」，更符合企業內部應用
 
-- **優點**：單一產品觀點清楚、共用層明確、符合 Turborepo/Nx 慣例
-- **缺點**：要搬資料庫 migration 與 env 設定
-- **成本/複雜度**：中（遷移 1-2 天）
+### 替代方案
 
-#### 選項二：繼續 modules/ 結構擴張
-- **描述**：新建 `modules/module3-closer-copilot/`
-- **優點**：結構不變
-- **缺點**：跨模組共用邏輯要不重複寫要不寫成 subtree，很痛
-- **成本/複雜度**：短期低、長期高
+見 **ADR-015**（系統管理員後台建用戶 + 帳密登入）。
 
-#### 選項三：整併 module1 + module2 + 新功能進 apps/
-- **描述**：把 module1 功能也搬進 apps/api
-- **優點**：最乾淨
-- **缺點**：module1 是 n8n+FastAPI 混合，搬遷成本過高且 MVP 不需要
-- **成本/複雜度**：高
+### 資料遷移
 
-### 3. 決策
-
-**選擇：選項一（扁平 monorepo）**
-
-**理由**：
-- MVP 的 4 個功能本質上是**一個產品**，不該切成獨立模組
-- `packages/domain`、`packages/llm` 是 multi-tenant 擴張時最先用到的共用層
-- 舊 `modules/` 保留為參考，降低決策成本
-- 遷移成本僅 1-2 天，遠低於長期開發拖累
-
-### 4. 後果
-
-- **正面**：
-  - 共用型別 & prompt 可被前後端 import
-  - 未來加 `apps/admin`、`apps/mobile` 有明確位置
-  - 符合大部分 monorepo 工具（Turborepo、Nx、pnpm workspaces）慣例
-- **負面**：
-  - Python 與 TypeScript 混合 monorepo 需處理工具鏈（uv + pnpm）
-  - 舊 `modules/` 目錄保留造成 repo 大小增加，但短期接受
-- **影響範圍**：
-  - `CLAUDE.md`（根層）需更新結構描述
-  - 根層新增 `pnpm-workspace.yaml` 與 `uv.lock`（workspace 模式）
-- **重新評估觸發**：若 Phase 2 決定把 module1 重啟，重評是否併入 apps/
-
-### 5. 執行計畫
-
-1. 在根層建立 `apps/web`、`apps/api`、`packages/domain`、`packages/llm`、`packages/ui`
-2. 複製 `modules/module2-questionnaire/backend` 內容到 `apps/api`（選擇性）或參考實作
-3. 把 Apple UI tokens 抽到 `packages/ui`
-4. 更新根層 `CLAUDE.md` 並新增各 `apps/*` 與 `packages/*` 的 CLAUDE.md
-5. `modules/` 增加 README 註明「舊 POC 參考，請參考 apps/ 新版」
+- 清除 `auth.users` 中既有的 Magic Link session
+- 將 coach_id 與 email 從 Supabase Auth 移至 users 表中自建（加 password_hash、password_hasher）
 
 ---
 
-## ADR-003: 資料庫選用 Supabase Cloud（PostgreSQL + pgvector）
+## ADR-015: ✨ 系統管理員後台建用戶 + 帳密登入
 
-> **狀態:** 已接受 | **日期:** 2026-04-24 | **決策者:** kuanwei
-
-### 1. 背景與問題
-
-- **上下文**：需要儲存問卷答案、客戶資料、商談摘要、提醒排程等結構化資料，Pilot 期量 < 100 份問卷/月。
-- **問題**：選 Supabase Cloud、自架 PostgreSQL、還是 SQLite 快速版？
-- **驅動因素/約束**：
-  - Pilot 階段量小，但需要穩定
-  - 希望未來能加向量搜尋（RAG 異議處理）
-  - 要有備份與認證能力
-  - 單人維運，不想自己管 DB
-
-### 2. 考量的選項
-
-#### 選項一：Supabase Cloud
-- **描述**：託管 PostgreSQL + Auth + Storage + pgvector + Realtime
-- **優點**：
-  - 免費方案足以 Pilot 用（500MB DB + 1GB storage）
-  - Row-Level Security (RLS) 天然支援 multi-tenant
-  - pgvector 內建
-  - Realtime 可做提醒推播
-- **缺點**：
-  - 資料主權在第三方
-  - 未來大量時成本線性上升
-- **成本/複雜度**：低（月費 0-25 USD）
-
-#### 選項二：自架 PostgreSQL（Railway/Fly.io）
-- **描述**：自建 Postgres 容器
-- **優點**：完全掌控、便宜
-- **缺點**：要自己做 migration、備份、監控
-- **成本/複雜度**：中
-
-#### 選項三：SQLite + Litestream（單機）
-- **描述**：極簡方案
-- **優點**：成本最低、單檔案好備份
-- **缺點**：未來多租戶、向量搜尋、並發寫入都不適合
-- **成本/複雜度**：短期最低
-
-### 3. 決策
-
-**選擇：選項一（Supabase Cloud）**
-
-**理由**：
-- RLS 是未來 multi-tenant 的重要基礎，不想後期補
-- 免費方案撐得過 Pilot 期
-- pgvector 讓未來商談異議 RAG 有擴展空間
-- 單人維運省心
-
-### 4. 後果
-
-- **正面**：
-  - Auth 可直接用 Supabase 提供（不用自建登入）
-  - Storage 可存問卷上傳檔（若未來要）
-  - Migration 工具（`supabase db push`）簡單
-- **負面**：
-  - 鎖定 Supabase 生態，搬到純 Postgres 需要改 Auth 與 Storage 層
-  - 免費方案有限制（7 天不活動會 pause），Pilot 前要設定自動 ping
-- **影響範圍**：
-  - Schema 設計需遵循 RLS 慣例（每表加 `tenant_id` + policy）
-  - 後端要用 Supabase Python SDK 或直連 PostgreSQL
-- **重新評估觸發**：月用量 > Supabase Pro 方案（25 USD）上限時
-
----
-
-## ADR-004: LLM 預設 Gemini-2.5-flash，LiteLLM 抽象可切換
-
-> **狀態:** 已接受 | **日期:** 2026-04-24 | **決策者:** kuanwei
+> **狀態:** 新增 | **日期:** 2026-05-08 | **決策者:** kuanwei | **推翻:** ADR-014（Magic Link） | **對應規格**：[12_phase1_mvp.md § M0](./12_phase1_mvp.md)
 
 ### 1. 背景與問題
 
-- **上下文**：MVP 有兩個 LLM 呼叫點：(1) 問卷送出後產生健康摘要（短文本）、(2) 商談前摘要（長文本 + 結構化輸出）。
-- **問題**：用 Gemini（便宜）還是 Claude（品質高）？
-- **驅動因素/約束**：
-  - Pilot 量 < 100 次/月，月成本預算 < 300 NTD
-  - 現有 `project.json` 記錄選 Gemini
-  - 麥肯錫文件推薦 Claude Opus 4.6
-
-### 2. 考量的選項
-
-#### 選項一：Gemini-2.5-flash 單一模型 + LiteLLM 抽象
-- **描述**：預設 Gemini，用 LiteLLM 讓未來可切 Claude/GPT
-- **優點**：
-  - 月成本 < 200 NTD
-  - LiteLLM 是成熟抽象
-- **缺點**：結構化輸出穩定度比 Claude 差
-
-#### 選項二：Claude Opus 4.6 全用
-- **描述**：直接上最強模型
-- **優點**：品質最高
-- **缺點**：Pilot 期月成本可能 > 1,000 NTD
-
-#### 選項三：混用（問卷計分 Gemini / 商談摘要 Claude）
-- **描述**：LiteLLM 路由
-- **優點**：兼顧成本與品質
-- **缺點**：兩種 API 風險、提示工程要做兩套
-
-### 3. 決策
-
-**選擇：選項一（Gemini + LiteLLM）**
-
-**理由**：
-- 成本考量優先
-- LiteLLM 讓未來切換成本接近零（改 config）
-- Pilot 第 2 週可評估品質，若不足再切換
-
-### 4. 後果
-
-- **正面**：月成本可控、未來彈性高
-- **負面**：
-  - 需要在 prompt 層處理 Gemini 結構化輸出穩定性（用 JSON mode + schema 驗證）
-  - LiteLLM 多一層抽象，debug 時要多讀一層 log
-- **影響範圍**：`packages/llm` 專責封裝
-- **重新評估觸發**：
-  - Pilot W2 評估：若商談摘要主觀品質 < 7/10（5 位教練評），切到 Claude Haiku 4.5
-  - 月成本超過 500 NTD 時評估降級
-
----
-
-## ADR-005: Multi-tenant：預留 tenant_id，不實作完整隔離
-
-> **狀態:** 已接受 | **日期:** 2026-04-24 | **決策者:** kuanwei
-
-### 1. 背景與問題
-
-- **上下文**：麥肯錫文件建議跨品牌擴張為 Phase 2。MVP 只服務 Synergy 3 位 Pilot 教練。
-- **問題**：要不要在 MVP 實作完整 multi-tenant（RLS、tenant 切換、品牌 UI）？
-- **驅動因素/約束**：
-  - 時程緊（8 週）
-  - Phase 2 目標是 6-12 個月後接 USANA
-  - 重構成本遠大於一開始多寫 10%
-
-### 2. 考量的選項
-
-#### 選項一：預留不實作
-- **描述**：
-  - 核心表加 `tenant_id` 欄位（MVP 固定為 'synergy'）
-  - RLS policy 寫好但不啟用
-  - 前端無品牌切換 UI
-- **優點**：Phase 2 啟用時改動最小
-- **缺點**：MVP 開發時要記得加欄位
-
-#### 選項二：完全不做
-- **描述**：MVP 當單租戶寫
-- **優點**：最快
-- **缺點**：Phase 2 要改所有表與查詢
-
-#### 選項三：完整實作
-- **描述**：MVP 就做好 tenant 切換
-- **優點**：Phase 2 即插即用
-- **缺點**：MVP 時程拉長 50%+
-
-### 3. 決策
-
-**選擇：選項一（預留不實作）**
-
-**理由**：
-- 加 tenant_id 欄位與 RLS policy 是 10 分鐘的事，不做是惰性不是理性
-- 完整實作 UI 是 2-3 週的事，Pilot 期不值得
-- 折衷方案
-
-### 4. 後果
-
-- **正面**：
-  - Phase 2 啟用 multi-tenant 只需「啟用 RLS + 加前端切換器」
-  - 資料從一開始就乾淨
-- **負面**：
-  - MVP 每個表多一個欄位，查詢多 `where tenant_id = ?` 但效能可忽略
-  - Pilot 測試時要確保 tenant_id 正確填入
-- **影響範圍**：
-  - 所有 schema、API、seed data 都要考慮
-  - `packages/domain` 的 type 必須包含 tenant_id
-- **重新評估觸發**：
-  - 簽約第 2 家客戶前 1 個月啟動完整 multi-tenant 實作
-
----
-
-## ADR-006: M1 獲客模組拆層；MVP 不實作內容生成層
-
-> **狀態:** 已接受 | **日期:** 2026-04-24 | **決策者:** kuanwei
-
-### 1. 背景與問題
-
-- **上下文**：原 PRD 把 M1（獲客行銷）當整塊 P0。客戶模組分層文件指出這是**最大架構錯誤**——M1 應拆兩層：
-  - 基礎層：Lead 蒐集、私訊入口整合（全員可用）
-  - 進階層：AI 貼文生成、SEO、故事包裝（只有 MEGA 會持續產出）
-- **問題**：MVP 要不要做任何 M1 功能？
-
-### 2. 考量的選項
-
-#### 選項一：M1 全延後
-- 基礎層也不做，問卷連結由教練手動分享
-
-#### 選項二：只做 M1 基礎層
-- Lead 蒐集頁、連結追蹤
-
-#### 選項三：全做（原 PRD 方向）
-
-### 3. 決策
-
-**選擇：選項一（M1 全延後）**
-
-**理由**：
-- MVP 問卷連結由教練手動在 LINE/FB 分享即可
-- Lead 蒐集頁可 Phase 2 再加，不影響核心漏斗
-- 內容生成層（貼文/SEO/故事）需要產出節奏與品牌語料，Pilot 期沒意義
-
-### 4. 後果
-
-- **正面**：MVP 專注力更集中，省 1-2 週開發
-- **負面**：
-  - 問卷觸及靠教練手動，擴散速度慢
-  - Phase 2 補 M1 基礎層時需要設計 Lead attribution
-- **重新評估觸發**：Pilot 期教練反映「問卷連結不好分享」時
-
----
-
-## ADR-007: M5/M6 於 MVP 完全不做
-
-> **狀態:** ⚠️ 部分推翻 | **日期:** 2026-04-24 | **決策者:** kuanwei
-> **推翻記錄：** ADR-012（2026-05-08）將 M6 輕量版復活（Leader Summary + Onboarding Tracking）；M5 仍延後
-
-### 1. 背景與問題
-
-- **上下文**：原 PRD 有 M5（成果轉介）與 M6（團隊管理）為 P0/P1。客戶兩份新文件都明確指出 MVP 不做。
-- **問題**：完全不做會不會影響 Phase 2？
-
-### 2. 考量的選項
-
-#### 選項一：完全不做
-- 資料 schema 不預留
-
-#### 選項二：預留 schema，不做 UI
-- DB 層加 `outcomes`、`team_members` 表但不使用
-
-#### 選項三：做最簡陋版本
-
-### 3. 決策
-
-**選擇：選項二（預留 schema，不做 UI/API）** — *後修正：M6 輕量版執行（見 ADR-012）*
-
-**理由**：
-- M5/M6 所需資料（成果追蹤、團隊關係）需要 M4 完整執行追蹤先跑半年
-- 但預留 schema 讓 Phase 2 啟動時不用改既有表
-- UI 與 API 完全延後，因為沒資料先做等於空殼
-
-### 4. 後果
-
-- **正面**：Phase 2 啟動時可立即接資料管線；2026-05-08 更新：M6 輕量版已執行
-- **負面**：Schema 設計要多花 30 分鐘想清楚未來欄位；2026-05-08：M6 輕量版包含物化視圖與新手進度表
-- **重新評估觸發**：Phase 2 Gate（Pilot 驗收達標後）；M6 輕量版已於 ADR-012 重新評估並執行
-
----
-
-## ADR-008: 提醒通道 LINE Messaging API 優先，Email 為備援
-
-> **狀態:** 已接受（2026-04-24 修訂，原 Email 優先決策已翻轉）| **日期:** 2026-04-24 | **決策者:** kuanwei
-
-### 1. 背景與問題
-
-- **上下文**：台灣教練日常溝通 95% 使用 LINE，Email 開信率低（< 30%）。LINE Notify 已於 2025-03 停用，只能走 LINE Messaging API（付費）。Pilot 量 < 100 通知/月。
-- **問題**：第一期提醒用哪個通道？
+- **上下文**：客戶決定廢棄 Magic Link，採簡單帳密登入以簡化系統依賴與教練 UX。
+- **問題**：帳密系統如何初始化、管理、與更新？
 - **驅動因素**：
-  - KR3「48h 跟進執行率 ≥ 80%」要達標，**通道必須命中教練日常視線**
-  - Pilot 只有 3 位教練，通道失效會直接拉爛 KPI
-  - 成本不是瓶頸（< 1,000 NTD/月 可接受）
-
-### 2. 考量的選項
-
-#### 選項一：Email（Resend）優先
-- **優點**：免費 3,000 封/月、設定簡單、跨平台
-- **缺點**：台灣教練開信率低，直接影響 KR3；需要教練主動檢查 inbox
-- **成本/複雜度**：低
-
-#### 選項二：LINE Messaging API 優先
-- **優點**：
-  - 符合教練既有溝通習慣，開信率接近 100%
-  - 推播即時、可帶連結回到 Lead 詳情頁
-  - KR3 達成機率最大化
-- **缺點**：
-  - 需申請 LINE Official Account（1-2 週審核）
-  - 月費 ~800 NTD（Light plan 15k messages）
-  - 需設計 webhook 處理用戶綁定
-- **成本/複雜度**：中
-
-#### 選項三：雙通道並行（LINE + Email）
-- **優點**：任一通道失效有備援
-- **缺點**：兩套通道 = 雙倍開發與測試成本
-- **成本/複雜度**：高
-
-### 3. 決策
-
-**選擇：選項二（LINE Messaging API 優先），Email 為備援通道（降級用）**
-
-**理由**：
-- **KR3 是 MVP 5 個 KR 中最難達成的**，通道選擇直接決定成敗
-- 教練在 LINE 看到提醒 → 點連結回到系統 → 完成跟進，整段摩擦最小
-- LINE OA 審核時程必須納入專案關鍵路徑，Week 0 啟動申請
-- Email 不砍掉：作為 LINE 失敗時的 fallback 通道（教練未綁定、LINE API 中斷、用量超標）
-
-### 4. 後果
-
-- **正面**：
-  - KR3 達成機率顯著提升
-  - Pilot 教練採用度更高（他們本來就活在 LINE 上）
-  - 直接驗證未來 Phase 2 跨品牌的主力通道
-- **負面**：
-  - LINE OA 申請排入**專案關鍵路徑**（Week 0 必須送出）
-  - 月費 +800 NTD（預算仍控制在 < 2,500 NTD）
-  - 需要教練一次性 LINE 綁定流程（可能造成輕微 onboarding 摩擦）
-  - 審核未過的風險需有 contingency plan
-- **影響範圍**：
-  - PRD US-D03 從 Should 升為 Must
-  - `apps/api/notifications` 需同時實作 LINE + Email 兩個 adapter
-  - 通道抽象層必須從一開始設計好（`NotificationChannel` Protocol）
-  - `leads` 或 `coaches` 資料表新增 `line_user_id` 欄位
-  - 部署 checklist 加入「LINE OA 審核通過」
-- **重新評估觸發**：
-  - LINE OA 審核超過 3 週未過 → 降級為 Email 優先 + LINE 作為 Phase 1.5 補齊
-  - Pilot W2 若教練 LINE 綁定率 < 100% → 加強 onboarding 引導
-
-### 5. 執行計畫
-
-1. **Week 0 Day 1**：送出 LINE Official Account 申請（Messaging API Channel）
-2. **Week 0**：同步申請 Resend API Key（作為 fallback）
-3. **Week 2**：實作 `NotificationChannel` Protocol 抽象層
-4. **Week 3**：`LineMessagingChannel` 實作 + webhook 綁定流程
-5. **Week 4**：`ResendEmailChannel` 實作（fallback）+ 雙通道路由策略
-6. **Week 5**：端到端測試：教練綁定 LINE → 觸發提醒 → 驗證 delivery
-7. **Week 5（contingency）**：若 LINE 未過審核，Email 改為主通道，LINE 補在 Phase 1.5
-
----
-
-## ADR-009: 商談摘要採「生成時寫入 DB + 快取不重算」策略
-
-> **狀態:** 已接受 | **日期:** 2026-04-24 | **決策者:** kuanwei
-
-### 1. 背景與問題
-
-- **上下文**：商談摘要由 LLM 生成，成本與延遲較高。教練可能多次查看同一份摘要。
-- **問題**：每次查看都重新生成？還是一次生成快取永久？
-
-### 2. 考量的選項
-
-#### 選項一：Lazy 生成（每次打開才呼叫 LLM）
-- **缺點**：成本高、延遲明顯、結果不穩定（每次不同）
-
-#### 選項二：問卷送出即生成並寫入 DB，後續查看直接讀
-- **優點**：成本可控、延遲低、結果穩定
-- **缺點**：問卷答案後續更新時要 invalidate
-
-#### 選項三：Lazy + 7 天 TTL 快取
-
-### 3. 決策
-
-**選擇：選項二（生成時寫入 DB，不重算）**
-
-**理由**：
-- LLM 成本與結果穩定性壓倒一切
-- 問卷答案 MVP 階段不可改（客戶填完即鎖定）
-- 教練若對摘要有疑慮，提供「重新生成」按鈕（用量受限）
-
-### 4. 後果
-
-- **正面**：
-  - p95 延遲 < 200ms（純 DB 讀）
-  - 月 LLM 成本可預測（= 問卷量 × 2 次）
-- **負面**：
-  - 若 prompt 升級，需要 batch 重跑舊資料
-  - 重新生成按鈕需防濫用（rate limit）
-- **影響範圍**：
-  - DB 增加 `summaries` 表（1:1 對應問卷）
-  - `packages/llm` 需有 `generate_summary(questionnaire_id)` 冪等接口
-- **重新評估觸發**：若問卷可編輯功能加入，需重評 invalidation 策略
-
----
-
-## ADR-010: Compliance 三層防線（規則庫 + LLM 二次覆核 + HITL）
-
-> **狀態:** 已接受 | **日期:** 2026-05-08 | **決策者:** kuanwei | **對應規格**：[12_phase1_mvp.md §合規 AI](./12_phase1_mvp.md)
-
-### 1. 背景與問題
-
-- **上下文**：客戶 Phase I 規格把「合規 AI」從 v2.0 的 Won't 拉回 **Must**。所有 AI 對外訊息（邀約文案、客戶版摘要、跟進草稿、商談話術）必須先通過合規檢查，避免醫療宣稱（C1）、收入宣稱（C2）、誇大效果（C3）、金字塔風險語句（C4）等四大類風險。
-- **問題**：合規檢查要兼顧「速度」（不能拖慢 ≤3s 的跟進草稿）、「準確度」（誤判率 < 5%）、「可稽核」（ComplianceLog 一比一保留）。單靠規則或單靠 LLM 都不夠。
-- **驅動因素**：
-  - 法務風險（誤過會傷品牌）
-  - 工程效能（每則訊息都要過，總呼叫量大）
-  - 可解釋性（被檢舉時要拿得出理由）
-
-### 2. 考量的選項
-
-#### 選項一：純規則庫（黑名單關鍵詞）
-- **優點**：快、便宜、可解釋
-- **缺點**：誤判率高（「治療師」也會被擋）、無法處理改寫變體
-- **成本**：低
-
-#### 選項二：純 LLM 判斷
-- **優點**：理解上下文、可同時改寫
-- **缺點**：每則 latency +2~5s、月成本估 1500+ NTD、不可解釋
-- **成本**：高
-
-#### 選項三：三層防線（採用）
-- **流程**：規則庫初篩 → LLM 二次覆核（僅可疑案件） → 高風險走 HITL
-- **優點**：成本可控、稽核可追溯、誤判率可降至 <5%
-- **缺點**：實作複雜度高，要維護規則庫詞表
-- **成本**：中
-
-### 3. 決策
-
-**採用選項三**。實作要點：
-
-1. **Layer 1 — 規則庫初篩**（純 Python，<10ms）
-   - 詞表分四類（C1/C2/C3/C4），每類至少 50 條（首版由客戶提供）
-   - 命中 → 標記 `risk_level = candidate` 進入 Layer 2
-   - 未命中 → 自動加上免責聲明後通過
-2. **Layer 2 — LLM 二次覆核**（高階模型，~2s）
-   - 僅 candidate 案件呼叫
-   - Prompt 要求輸出 `{risk_level: low/medium/high, rewritten_text, reason}`
-   - low → 自動採用 rewritten_text；medium → 採用且記錄；high → 進 Layer 3
-3. **Layer 3 — HITL**（見 ADR-011）
-
-**所有經過任一層的訊息**：寫入 `compliance_logs`（原文 / 改寫後 / 風險等級 / 是否人工覆核 / 規則命中 / LLM 模型版本）。
-
-### 4. 後果
-
-- **正向**：合規風險顯著降低；資料累積後可訓練私有分類器（Phase II）
-- **負向**：跟進草稿 latency 預算需擴至 5s（規格 ≤3s 仍要努力達成，靠規則庫快路徑）
-- **追蹤**：`compliance_check_p95_latency`、`hitl_queue_depth`、`auto_pass_rate`
-
-### 5. 影響
-
-- 影響 [05_api.md](./05_api.md)：所有產生對外文字的 endpoint 需串接 Compliance Service
-- 影響 [06_modules.md §ComplianceService](./06_modules.md)：新增模組
-- 影響 [10_security.md](./10_security.md)：ComplianceLog 列為稽核必保留資料
-
----
-
-## ADR-011: HITL 人工審核佇列 — 同步阻塞 + 30 min SLA
-
-> **狀態:** 已接受 | **日期:** 2026-05-08 | **決策者:** kuanwei | **對應規格**：[12_phase1_mvp.md §HITL](./12_phase1_mvp.md)
-
-### 1. 背景與問題
-
-- **上下文**：ADR-010 的 Layer 3（high risk）與 SKU 推薦、健康建議都需人工審核（HITL）。
-- **問題**：HITL 是「同步阻塞」（教練要等審核才能發送）還是「非同步通過 + 事後追溯」？前者體驗差但合規嚴；後者體驗好但風險已外洩。
-- **驅動因素**：
-  - 教練黃金跟進時間（48h）不能等太久
-  - Pilot 期審核員可能只有 1-2 人
-  - 規格未明指 SLA，需自定
-
-### 2. 考量的選項
-
-| 選項 | 描述 | 優 | 缺 |
-| :--- | :--- | :--- | :--- |
-| A | 同步阻塞 + 30min SLA | 風險完全攔截 | 體驗差、需審核員待命 |
-| B | 非同步預設通過 + 事後審核 | 體驗好 | 高風險可能已送達客戶 |
-| C | **同步阻塞但設快速通道** | 取折衷 | 規則最複雜 |
-
-### 3. 決策
-
-**採用選項 C**：
-
-1. **預設同步阻塞**：高風險訊息進佇列，教練 UI 顯示「審核中」狀態
-2. **30 min 內 SLA**：審核員需在 30 分鐘內處理（Pilot 期目標）
-3. **快速通道**：「商談中即時話術」例外採非同步（先送出 + 標記待覆核），因即時對話不能等
-4. **HITL 介面**：`/compliance/queue` 頁，列出待審項，提供 Approve / Reject + Rewrite / Escalate
-5. **超時處理**：> 30 min 未審 → 系統發信給審核員主管 + 教練可選擇「降級為純文字 + 免責聲明」
-6. **記錄**：每次 HITL 動作寫入 `compliance_logs.reviewed_by`、`reviewed_at`、`hitl_decision`
-
-### 4. 後果
-
-- **正向**：合規責任明確、審核行為可追蹤
-- **負向**：需 Pilot 期確認審核員人力（Q-006 待決）；UX 增加「審核中」狀態
-- **風險**：若審核員人力不足，48h 跟進可能超時（緩解：規則庫詞表越完整 → Layer 3 比例越低）
-
-### 5. 待決問題（Block W1 啟動）
-
-- Q-006：HITL 審核員是「客戶內部合規人員」還是「我方代審」？
-- Q-007：規則庫詞表初版（C1-C4 共 200 條）由誰提供？最遲 W1 D1
-
----
-
-## ADR-012: M6 輕量 Activity Tracking — 共用 EventLog + 物化視圖
-
-> **狀態:** 已接受 | **日期:** 2026-05-08 | **決策者:** kuanwei | **推翻**：ADR-007（M6 完全不做）
-
-### 1. 背景與問題
-
-- **上下文**：客戶 Phase I 把「Leader Summary + 新手教練進度」納入 Must。但完整 M6（團隊管理、組織樹、業績串接）仍延後。
-- **問題**：要為 M6 輕量版獨立建表（teams, kpi_snapshots, onboarding_tasks…）還是複用既有 EventLog？
-- **驅動因素**：
-  - 4 週時程，不能花太多時間做複雜資料表
-  - F6.1~F6.4 指標（問卷數、商談數、成交數、跟進執行率、AI 摘要使用、高風險觸發）都已有來源（leads, conversation_plans, follow_up_tasks, event_logs, compliance_logs）
-  - 新手進度（F6.6）是少量靜態 checklist，不需複雜表
+  - 企業內部應用（不是公開平台），無自助註冊需求
+  - 簡化第三方 email 服務依賴
+  - 教練體驗最優化（直接輸入帳密，無郵件等待）
 
 ### 2. 決策
 
-**採用「共用 + 物化視圖」**：
+**採用「系統管理員後台建用戶 + 帳密登入」**
 
-1. **F6.1~F6.5（聚合指標）**：不建新表，採 PostgreSQL 物化視圖
-   - `mv_coach_weekly_stats`（每位教練週統計）
-   - `mv_leader_summary`（Leader 視角彙總）
-   - 每 30 min 用 `pg_cron` refresh（Pilot 期足夠即時）
-2. **F6.6 新手教練進度**：建一張小表 `onboarding_tasks`
-   - 欄位：`coach_id, task_key, completed_at, evidence_url`
-   - Task 清單寫死於 YAML（Pilot 期 ~10 項，例：「綁定 LINE OA」「第一次成交」「完成 5 次商談」）
-3. **不做**：teams 組織樹、業績串接、獎金計算（仍 Won't）
+1. **用戶建立流程**：
+   - 系統管理員在 `/admin/users` 後台頁面新增教練帳號
+   - 輸入：email + 初始密碼（由系統隨機生成或 admin 手動設）
+   - 密碼存儲：bcrypt hash (cost=12) → `users.password_hash`
+   - 初始化標記：`users.must_change_password = true`
 
-### 3. 後果
+2. **首次登入流程**：
+   - 教練在 `/login` 輸入 email + 密碼
+   - 系統驗證：檢查 email 存在 + password_hash 匹配
+   - JWT 核發（access 1h + refresh 7d）
+   - 強制跳轉 `/auth/change-password`（因 `must_change_password = true`）
+   - 教練設定新密碼 → 更新 DB + 標記 `must_change_password = false`
 
-- **正向**：4 週可達；Phase II 升級為完整 M6 時，資料已累積
-- **負向**：物化視圖 30min 延遲（Leader 看不到實時資料 — 可接受）
-- **追蹤**：物化視圖 refresh 失敗監控；onboarding 完成率
+3. **日常登入**：
+   - 教練輸入 email + 密碼
+   - 驗證成功 → JWT 核發 → 重導向 `/leads` 或 `/leader/summary`
 
-### 4. 影響
+4. **密碼政策**：
+   - 最少 10 字元，含數字 + 字母（大小寫）
+   - bcrypt cost = 12（~0.3s 驗證時間，安全與性能平衡）
+   - 暴力破解防護：失敗 5 次 → 帳號鎖定 15 分鐘
+   - 密碼重置：admin 可在 `/admin/users/:id/reset-password` 強制重設，教練須再次首次登入流程
 
-- 影響 [04_architecture.md](./04_architecture.md)：資料層新增物化視圖
-- 影響 [06_modules.md §ActivityTrackingService, LeaderSummaryService, OnboardingProgressService](./06_modules.md)：新增三個 Application 模組
-- 影響 [09_frontend_ia.md](./09_frontend_ia.md)：新增 `/leader/*` 頁面群
+5. **後台操作**（`/admin/users`）：
+   - `GET /admin/users` — 列表
+   - `POST /admin/users` — 建立（email + 初始密碼）
+   - `PATCH /admin/users/:id` — 編輯（name、role、status）
+   - `DELETE /admin/users/:id` — 刪除（邏輯刪除，保留稽核記錄）
+   - `POST /admin/users/:id/reset-password` — 強制重設密碼
 
----
+### 3. 實作細節
 
-## ADR-013: 前端框架改為 React 19 + Vite（推翻 ADR-001 前端部分）
+**模組**：
+- `UserManagementService`（Application）：admin 操作 CRUD
+- `PasswordAuthService`（Application）：login / change-password / logout
+- `PasswordHasher`（Domain）：bcrypt 封裝
 
-> **狀態:** 已接受 | **日期:** 2026-05-08 | **決策者:** kuanwei | **推翻**：ADR-001 前端決策
-
-### 1. 背景與問題
-
-- **上下文**：ADR-001 原定前端用 Next.js 15，主因是 module2 既有 React 19 + Tailwind v4 + Apple tokens 可複用。但實務評估發現：
-  - MVP 前端純 SPA（無 SSR 需求）：問卷是公開頁但無 SEO；教練後台是受認證頁；Leader Summary 同樣無 SEO 需求
-  - Next.js 15 AppRouter 在 SPA 模式下添加複雜性（middleware、dynamic import、metadata） — 反而拖累啟動速度與維運
-  - Vite 啟動快（< 1s dev）、依賴少、無 Node.js runtime 綁定 — 適合 Pilot 期快速迭代
-  - Module1 已驗證 Vite + React + Tailwind 可行，可借鏡
-- **問題**：改用 React + Vite 會不會拖延進度、或造成與後端集成困難？
-
-### 2. 考量的選項
-
-#### 選項一：保留 Next.js 15（ADR-001 決策）
-- **優點**：已有 module2 經驗、集成 API BFF 簡單、內置 Auth middleware
-- **缺點**：無 SSR 需求反而造成過度工程、dev 啟動較慢、不適合 SPA、部署平台受限（Vercel 優先，但本案用 Cloudflare Pages 時有限制）
-- **成本**：無新學習、但 SPA 架構需 workaround
-
-#### 選項二：React 19 + Vite（採用）
-- **優點**：
-  - 純 SPA，架構簡單清爽
-  - Vite 啟動快、dev 體驗好、build 產出 static HTML — 對 Cloudflare Pages 最友好
-  - 依賴少，適合 Pilot 期輕量維運
-  - 與 module1-distributor 既有經驗一致（降低新成員上手成本）
-  - 可沿用 module2 既有元件與 Apple tokens
-- **缺點**：路由自己實作（建議用 react-router-dom v7 或 TanStack Router）、no built-in SSR（但 MVP 不需要）、SEO meta 要手寫（react-helmet-async）
-- **成本**：低（routing + helmet 各 < 2h 集成）
-
-#### 選項三：Remix（全棧框架）
-- **優點**：兼具 SPA 靈活與後端友好
-- **缺點**：學習曲線陡、Pilot 期不必要
-- **成本**：高
-
-### 3. 決策
-
-**選擇：選項二（React 19 + Vite）**
-
-**理由**：
-- **MVP 本質是 SPA**（無 SSR、無 ISR、無 middleware 複雜邏輯），Next.js AppRouter 過度設計
-- **Vite 啟動速度**對日常 Pilot 開發體驗影響大（dev < 1s vs Next.js ~3-5s），每天減少 30+ 分鐘累積時間
-- **部署平台最優化**：Vite 產出純靜態文件 → Cloudflare Pages 秒級部署、edge cache 最高效、成本最低
-- **既有驗證**：module1 已用 Vite，團隊零陌生感；module2 React 元件與 tokens 照用無改動
-- **Phase 2 平滑過渡**：若未來需 SSR（跨品牌版），改用 Remix 或 Next.js 時，React 元件無損搬遷（僅路由 refactor）
+**資料表**：
+```sql
+-- users 表新增欄位
+ALTER TABLE users ADD COLUMN password_hash TEXT;                    -- bcrypt hash
+ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT true;  -- 首次強制改
+ALTER TABLE users ADD COLUMN failed_login_count INT DEFAULT 0;      -- 暴力破解計數
+ALTER TABLE users ADD COLUMN locked_until TIMESTAMPTZ;              -- 鎖定至時間
+ALTER TABLE users ADD COLUMN whatsapp_id TEXT;                      -- WhatsApp 整合（新增）
+```
 
 ### 4. 後果
 
-- **正面**：
-  - 開發迴圈快（Vite dev mode < 1s）
-  - build 產出極小（tree-shake + minify 效率高）
-  - 部署簡單（pure static → Cloudflare Pages 無 build step）
-  - 與 module1 技術一致，未來整合無縫
-  - 維運成本低（無 Node.js 後端依賴）
-- **負面**：
-  - 路由自己實作（工作量 ~2-3h 用 react-router-dom v7）
-  - 無內置 Auth middleware，需在 React 層實作 protected routes
-  - SEO meta 要用 react-helmet-async（~30 min 集成）
-  - 若 Pilot 期突然要 SSR（極罕見），需 refactor — 但風險低（元件無損）
-  - 環境變數命名變更：Next.js 的 `NEXT_PUBLIC_*` → Vite 的 `VITE_*`
-- **影響範圍**：
-  - 影響 [07_structure.md](./07_structure.md)：`apps/web` 結構改為 Vite；`src/routes/` 替代 `app/`
-  - 影響 [08_design_dependencies.md](./08_design_dependencies.md)：移除 `next`、`next-auth`；新增 `vite`、`react-router-dom`、`react-helmet-async`
-  - 影響 [11_deployment.md](./11_deployment.md)：部署改 Cloudflare Pages（或 Netlify）；不用 Vercel
-  - 影響 [04_architecture.md](./04_architecture.md)：L2 Container 圖改 Vite；技術選型表改 React + Vite
-  - 前端套件管理器與 build 指令變更（PM 由用戶決定 — npm/pnpm/bun）
-- **重新評估觸發**：
-  - Pilot W2 若教練需要 PWA offline 支持 → 加 workbox plugin
-  - Phase 2 若需 multi-brand SSR → 評估遷移到 Remix（成本估 3-5 day）
+- **正向**：
+  - 消除 Resend 依賴 + Magic Link 複雜性
+  - Admin 掌握完全控制（建立、重設、刪除）
+  - 首次強制改密碼符合企業安全標準
+  - 密碼重置無需 email，直接 admin 後台操作
+- **負向**：
+  - 教練需要記住密碼（緩解：密碼 manager 或 SSO Phase 2）
+  - Admin 需要管理 password resets（工作量小）
+- **追蹤**：failed login 計數、lock 解除次數、password reset 頻率
 
-### 5. 執行計畫
+### 5. 影響
 
-1. **W0 D1**：建立 `apps/web` 基礎結構（Vite + React 19 + Tailwind v4 + Apple tokens）
-2. **W0 D2-D3**：集成 react-router-dom v7（路由、nested routes、protected routes）
-3. **W0 D4**：集成 react-helmet-async（head meta 管理）
-4. **W0 D5**：集成 @supabase/supabase-js + Auth flow（Magic Link）
-5. **W1 D1-D2**：複製 module2 既有元件、業務邏輯到 `apps/web/components`
-6. **W1 D3-W2**：實作問卷頁、Lead 列表、Briefing 詳情、Reminder 列表（5 個頁面）
-7. **W2 D4-W3**：合規審核隊列頁 + Leader Summary 新增（2 個新頁面）
+- 移除 Resend（Magic Link email）使用，但 Resend 仍用於 M4 Email 提醒通道
+- 新增 `/admin/users` UI 頁面
+- API 端點新增 12 個（見 [05_api.md § Admin Endpoints](./05_api.md)）
 
 ---
 
-## 附錄：決策相依圖
+## ADR-016: ✨ 通知通道擴充至 LINE/WhatsApp/Email
+
+> **狀態:** 新增 | **日期:** 2026-05-08 | **決策者:** kuanwei | **升級:** ADR-008 | **對應規格**：[12_phase1_mvp.md § M4](./12_phase1_mvp.md)
+
+### 1. 背景與問題
+
+- **上下文**：Pilot 覆蓋三個區域：台灣（LINE 優先）、東南亞（WhatsApp 普遍）、中國（Email 備援）
+- **問題**：如何在統一架構下支援多通道，並合理 fallback？
+- **驅動因素**：
+  - 地區適配性（不同國家使用習慣）
+  - 傳遞保障（某通道失敗自動降級）
+  - 成本最優化（每個通道按用量計費）
+
+### 2. 決策
+
+**採用「三層 Fallback」**：**LINE（主） → WhatsApp（次） → Email（備援）**
+
+1. **通道優先級與配置**：
+   ```
+   LINE Messaging API
+   ├─ 優先級：第一選
+   ├─ 目標用戶：台灣 coach（日活率最高）
+   ├─ 月費：LINE Light Plan ~800 NTD（15k 訊息額度）
+   ├─ 失敗觸發：網路超時、限流、無效 user_id
+   
+   WhatsApp Business Cloud API
+   ├─ 優先級：第二選
+   ├─ 目標用戶：東南亞 / 國際 coach（無 LINE 時用）
+   ├─ 月費：按訊息量計費（~0.5 USD / 訊息，1000 訊息 ~500 NTD）
+   ├─ 失敗觸發：LINE 已嘗試 3 次失敗 或 user 無 whatsapp_id
+   
+   Resend Email
+   ├─ 優先級：備援
+   ├─ 目標用戶：所有 coach（最後保險）
+   ├─ 月費：< 3000 email/月 免費
+   ├─ 失敗觸發：前兩通道全部失敗
+   ```
+
+2. **用戶配置**：
+   - `users` 表新增三個欄位：`line_user_id`、`whatsapp_id`、`email`
+   - `coach_preferences` 表（新）：記錄教練的通道偏好（可自訂順序）
+
+3. **發送流程**（NotificationService）：
+   ```python
+   async def send_reminder(coach_id, message):
+       # 1. 讀取 coach preferences 與聯絡資訊
+       coach = await coach_repo.get(coach_id)
+       prefs = coach.notification_preferences or DEFAULT_PREFS  # LINE > WhatsApp > Email
+       
+       # 2. 嘗試 LINE
+       if coach.line_user_id and LineChannel in prefs:
+           success = await line_channel.send(coach.line_user_id, message)
+           if success:
+               log_event('reminder_sent', channel='line')
+               return
+       
+       # 3. 失敗 → WhatsApp
+       if coach.whatsapp_id and WhatsAppChannel in prefs:
+           success = await whatsapp_channel.send(coach.whatsapp_id, message)
+           if success:
+               log_event('reminder_sent', channel='whatsapp')
+               return
+       
+       # 4. 再失敗 → Email
+       success = await email_channel.send(coach.email, message)
+       if success:
+           log_event('reminder_sent', channel='email')
+           return
+       
+       # 5. 全部失敗 → 標記未送 + 告警
+       log_event('reminder_failed', all_channels_failed=True)
+       alert_admin(f"Coach {coach_id} 通知失敗")
+   ```
+
+4. **WhatsApp 整合細節**：
+   - API：Meta WhatsApp Business Cloud API（官方）
+   - 認證：`WHATSAPP_ACCESS_TOKEN`（長期 token，via Meta Business Manager）
+   - Webhook：`POST /webhooks/whatsapp` 接收訊息確認回呼
+   - Phone Number ID：客戶需事先申請 WhatsApp Business 帳號 + 取得 Phone Number ID
+   - 訊息樣板：需預先在 Meta dashboard 建立審核通過的樣板（合規檢查）
+   - 計費：按發送訊息數計費（不按成功率）
+
+### 3. 後果
+
+- **正向**：
+  - 全球覆蓋三個主要通訊平台
+  - 自動 fallback 確保訊息送達率
+  - 教練可自訂通道偏好
+  - 成本可控（按通道選擇）
+- **負向**：
+  - WhatsApp 需客戶自行申請與配置（交付成本 +1 週）
+  - 訊息樣板審核延遲（1-2 天）
+  - 月費額外 ~500 NTD（WhatsApp）
+- **追蹤**：每通道送達率、失敗率、平均 fallback 層數
+
+### 4. 環境變數
+
+```bash
+# LINE（既有）
+LINE_MESSAGING_API_KEY=...
+LINE_MESSAGING_API_SECRET=...
+
+# WhatsApp（新增）
+WHATSAPP_ACCESS_TOKEN=...
+WHATSAPP_PHONE_NUMBER_ID=...
+WHATSAPP_VERIFY_TOKEN=...    # webhook 驗證
+
+# Email（既有）
+RESEND_API_KEY=...
+```
+
+### 5. 影響
+
+- 新增 `WhatsAppChannel` 模組（Infrastructure）
+- 新增 `POST /webhooks/whatsapp` endpoint（接收訊息回呼與送達確認）
+- 新增 `coach_preferences` 表
+- 修改 `NotificationService` 邏輯（三層 fallback）
+
+---
+
+## ADR-017: ✨ 規則庫 DB 化 + pgvector 語意比對
+
+> **狀態:** 新增 | **日期:** 2026-05-08 | **決策者:** kuanwei | **升級:** ADR-010（Compliance 三層防線） | **對應規格**：[12_phase1_mvp.md § F5 合規 AI](./12_phase1_mvp.md)
+
+### 1. 背景與問題
+
+- **上下文**：Pilot 期客戶需要動態管理合規詞表（C1/C2/C3/C4），並支援自動改寫建議。YAML 固定配置無法滿足。
+- **問題**：規則庫應如何儲存、更新、與應用？
+- **驅動因素**：
+  - 規則庫頻繁變更（客戶每週微調禁用詞）
+  - 需要向量語意比對（「療效」與「治療」近似，應同時命中）
+  - 需要自動改寫建議（違規文案自動建議修改方案）
+
+### 2. 決策
+
+**採用「資料庫 + pgvector 向量語意比對」**
+
+1. **資料表設計**：
+   ```sql
+   CREATE TABLE compliance_rules (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       tenant_id UUID NOT NULL FK -> tenants,
+       category TEXT NOT NULL,  -- C1/C2/C3/C4
+       phrase TEXT NOT NULL,    -- 黑名單詞或句（如 "療效" / "保證治療"）
+       severity TEXT NOT NULL,  -- low/medium/high
+       suggested_rewrite TEXT,  -- 自動改寫建議（如 "可提供幫助" 代替 "保證療效"）
+       embedding VECTOR(1536),  -- pgvector 向量（OpenAI ada-002 或 Gemini embedding）
+       enabled BOOLEAN DEFAULT true,
+       created_by UUID NOT NULL FK -> users,
+       updated_by UUID NOT NULL FK -> users,
+       created_at TIMESTAMPTZ DEFAULT now(),
+       updated_at TIMESTAMPTZ DEFAULT now(),
+       
+       -- Indexes
+       CONSTRAINT fk_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+       INDEX idx_category_enabled ON (category, enabled),
+       INDEX idx_embedding ON embedding USING ivfflat (vector_cosine_ops)  -- pgvector HNSW 或 IVFFlat
+   );
+   ```
+
+2. **三層合規檢查新流程**：
+   ```
+   Layer 1 — 規則庫字面匹配（<10ms）
+   ├─ 逐一檢查 compliance_rules，詞重合 → 標 candidate
+   └─ 無命中 → 自動通過（標 auto_pass）
+   
+   Layer 2 — 向量語意比對 (pgvector，<50ms)
+   ├─ 文本轉向量：`embedding = embed_text(原文)`
+   ├─ cosine_similarity > THRESHOLD (0.85) → 匹配風險規則
+   ├─ 收集所有匹配規則（可能多個）
+   ├─ LLM 二次覆核：輸入原文 + 匹配規則 + 改寫建議 → 質量評分
+   └─ quality_score ≥ 0.7 → 標 lm_approved；< 0.7 → 標 quality_failed
+   
+   Layer 3 — 教練決策（人工）
+   ├─ 訊息 + 改寫版 + 風險標記進 message_drafts
+   ├─ 教練 UI 展示原文、改寫版、命中規則、quality_score
+   ├─ 教練決策：接受、編輯、或丟棄
+   └─ 「發送」時才寫入 compliance_logs（可稽核）
+   ```
+
+3. **Embedding 模型選擇**：
+   - **建議 1**：Gemini text-embedding（維度 768）或 OpenAI ada-002（維度 1536）
+   - **建議 2**：本地 sentence-transformers（開源、無月費，但需自己部署）
+   - **使用 API**：Gemini 月費 ~100-200 NTD（embedding 便宜）
+   - **環境變數**：`EMBEDDING_MODEL=gemini` 或 `sentence-transformers`
+
+4. **Admin 後台操作**（`/admin/compliance-rules`）：
+   - `GET /admin/compliance-rules` — 列表（按 category 篩選）
+   - `POST /admin/compliance-rules` — 新增規則
+   - `PATCH /admin/compliance-rules/:id` — 編輯規則 + 重算 embedding
+   - `DELETE /admin/compliance-rules/:id` — 刪除
+   - `POST /admin/compliance-rules/import` — CSV 批量匯入（包含詞表、severity、改寫建議）
+   - `POST /admin/compliance-rules/regenerate-embeddings` — 手動重算所有 embedding（月 1-2 次）
+
+5. **相似度閾值與調整**：
+   - 預設 `SEMANTIC_SIMILARITY_THRESHOLD = 0.85`（可配置）
+   - Pilot 期按實際誤判率調整（目標 < 5%）
+   - Admin 可在後台檢視「被拒絕但應通過」的案件 → 調整閾值
+
+### 3. 實作模組
+
+- **ComplianceRuleService**（Application）：CRUD + embedding 計算
+- **SemanticMatcher**（Domain）：純函式 cosine_similarity 與規則比對邏輯
+- **ComplianceService**（升級）：Layer 2 整合 SemanticMatcher + LLM 覆核
+
+### 4. 後果
+
+- **正向**：
+  - 規則庫動態可更新（無需重啟）
+  - 語意比對提高準確度（「療效」+ 「治療」+ 「見效」 一次命中）
+  - 向量存儲支援未來機器學習（Phase 2 可訓練私有分類器）
+  - CSV 批量匯入簡化客戶初始化
+- **負向**：
+  - pgvector extension 需額外配置（但 PostgreSQL 17+ 現成支援）
+  - embedding 月費 ~100-200 NTD（若用 API）
+  - 冷啟動時需預計算所有規則的 embedding（~10 秒）
+- **追蹤**：規則庫命中率、語意匹配誤判率、embedding API 月費
+
+### 5. 環境變數
+
+```bash
+SEMANTIC_SIMILARITY_THRESHOLD=0.85
+EMBEDDING_MODEL=gemini  # 或 sentence-transformers
+GEMINI_EMBEDDING_API_KEY=...  # 若選 Gemini
+```
+
+---
+
+## ADR-018: ✨ 部署平台 GCP（Cloud Run + Cloud SQL + Cloud CDN）
+
+> **狀態:** 新增 | **日期:** 2026-05-08 | **決策者:** kuanwei | **修訂:** ADR-013（前端部署）| **對應規格**：[11_deployment.md](./11_deployment.md)
+
+### 1. 背景與問題
+
+- **上下文**：v3.0 計畫用 Cloudflare Pages（前端）+ Railway（後端），但客戶決定統一 GCP（成本與管理集中化）。
+- **問題**：如何在 GCP 上部署 FastAPI + React SPA + PostgreSQL？
+- **驅動因素**：
+  - 企業級基礎設施穩定性
+  - 統一 Google Cloud 生態（文件一致、支持一致）
+  - 成本可控（Cloud Run 按使用量計費、Cloud SQL free tier 足夠 Pilot）
+
+### 2. 決策
+
+**採用 GCP 原生服務全棧**
+
+| 組件 | GCP 服務 | 規格 | 月費估 |
+|---|---|---|---|
+| **前端靜態** | Cloud Storage + Cloud CDN | 1 GB 存儲 + edge cache | 100-200 NTD |
+| **後端 API** | Cloud Run | 2 vCPU / 4 GB RAM（自動擴展） | 200-500 NTD |
+| **資料庫** | Cloud SQL for PostgreSQL 17 | db-f1-micro (0.6GB RAM) + pgvector | 250-350 NTD |
+| **排程任務** | Cloud Scheduler + Cloud Run | 每小時掃提醒 + 30min 更新物化視圖 | 50 NTD |
+| **容器 registry** | Artifact Registry | docker 鏡像儲存 | 50 NTD |
+| **機密管理** | Secret Manager | API keys、DB 密碼 | 免費（6 版本上限） |
+| **監控日誌** | Cloud Logging + Cloud Monitoring | 標準監控 | 50-100 NTD |
+| **域名 + 負載均衡** | Cloud DNS + Cloud Load Balancer | 按查詢 + 按流量 | 100-200 NTD |
+| **合計** | — | — | **~800-1,500 NTD/月** |
+
+### 3. 架構拓撲
+
+```
+使用者（瀏覽器）
+    ↓
+Cloud CDN（邊界節點）
+    ├─ 靜態資源（HTML/JS/CSS）→ Cloud Storage
+    └─ API 請求 → Cloud Load Balancer
+         ↓
+    Cloud Run（FastAPI 容器）
+         ├─ 自動擴展 0-10 instance
+         ├─ 健康檢查 /health
+         └─ JWT 驗證
+         ↓
+    Cloud SQL（PostgreSQL 17 + pgvector）
+         ├─ Cloud SQL Auth Proxy（SSL only）
+         ├─ 自動備份（日）
+         └─ 讀副本（可選 Phase 2）
+         
+排程層（Cloud Scheduler）
+    ├─ 每小時：掃待發提醒
+    ├─ 每 30 min：更新物化視圖
+    └─ 觸發 → Cloud Run Job Endpoint
+```
+
+### 4. 開發與部署流程
+
+#### 本地開發（docker-compose）
+```bash
+# docker-compose.yml
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: synergy_dev
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command: |
+      postgres -c shared_preload_libraries=vector
+
+  pgvector:
+    image: pgvector/pgvector:pg17
+    # 或在 postgres 容器中執行：CREATE EXTENSION vector;
+
+volumes:
+  postgres_data:
+```
+
+#### CI/CD（GitHub Actions）
+
+```yaml
+name: Deploy to GCP
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # 前端
+      - name: Build Frontend
+        run: |
+          cd apps/web && npm install && npm run build
+          
+      - name: Deploy Frontend to Cloud Storage
+        run: |
+          gsutil -m rsync -r -d apps/web/dist gs://synergy-ai-web-bucket/
+          
+      - name: Invalidate CDN Cache
+        run: |
+          gcloud compute url-maps invalidate-cdn-cache web-load-balancer --path "/*"
+      
+      # 後端
+      - name: Build Backend Docker Image
+        run: |
+          docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/synergy-api:${{ github.sha }} \
+            -f apps/api/Dockerfile apps/api
+          docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/synergy-api:${{ github.sha }}
+      
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy synergy-api \
+            --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/synergy-api:${{ github.sha }} \
+            --region asia-east1 \
+            --memory 4Gi \
+            --cpu 2 \
+            --set-env-vars DATABASE_URL=cloudsql://... \
+            --allow-unauthenticated
+      
+      # DB 遷移
+      - name: Run Migrations
+        run: |
+          gcloud run jobs execute synergy-migrate \
+            --region asia-east1 \
+            --wait
+```
+
+#### Docker 鏡像（apps/api/Dockerfile）
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 複製 uv lock
+COPY uv.lock pyproject.toml ./
+
+# 安裝依賴
+RUN pip install --no-cache-dir uv
+RUN uv sync --no-dev
+
+# 複製應用
+COPY apps/api ./
+
+# 健康檢查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
+
+# 用 uv run 啟動
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### 5. 環境變數管理
+
+#### 本地開發（.env.local）
+```bash
+DATABASE_URL=postgresql+asyncpg://dev:dev_local@localhost:5432/synergy_dev
+API_URL=http://localhost:8000
+VITE_API_BASE_URL=http://localhost:8000
+VITE_SUPABASE_URL=http://localhost:54321  # 若用本地 Supabase 替代
+...
+```
+
+#### Cloud Run（Secret Manager）
+```bash
+# 儲存 Secret
+gcloud secrets create database-url --data-file=- <<< "postgresql+asyncpg://user:pass@cloud-sql-ip:5432/synergy"
+gcloud secrets create gemini-api-key --data-file=- <<< "..."
+...
+
+# Cloud Run 掛載 Secret
+gcloud run deploy synergy-api \
+  --set-env-vars DATABASE_URL=projects/PROJECT_ID/secrets/database-url/versions/latest:ref \
+  ...
+```
+
+### 6. PostgreSQL 安全配置
+
+#### Cloud SQL（GCP 管控）
+- SSL 強制（pg_hba.conf 自動設定）
+- Cloud SQL Auth Proxy（應用側無需儲存密碼）
+- 自動備份（日期保留 30 天）
+- 自動更新（每季月次 patch）
+
+#### 應用連線
+```python
+# Cloud SQL Auth Proxy 簡化連線
+DATABASE_URL = "postgresql+asyncpg://user:pass@/synergy?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME"
+
+# 或顯式 Cloud SQL Proxy
+import sqlalchemy.pool as pool
+engine = create_engine(
+    DATABASE_URL,
+    poolclass=pool.NullPool,  # Cloud Run 無需連線池
+    echo=False
+)
+```
+
+### 7. 部署環境變數對照
+
+| 變數 | 本地 | Cloud Run |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+asyncpg://dev:@localhost:5432/...` | Secret Manager（SSL） |
+| `GEMINI_API_KEY` | `.env` | Secret Manager |
+| `WHATSAPP_ACCESS_TOKEN` | `.env` | Secret Manager |
+| `LINE_MESSAGING_API_KEY` | `.env` | Secret Manager |
+| `VITE_API_BASE_URL` | `http://localhost:8000` | `https://api.synergy-ai.tw` |
+| `LOG_LEVEL` | `DEBUG` | `INFO` |
+
+### 8. 成本估算（月度，Pilot 階段）
+
+| 項目 | 成本 | 備註 |
+|---|---|---|
+| Cloud Storage + CDN | 100-200 | 1 GB + 10 GB egress |
+| Cloud Run | 200-500 | 平均 0.5 instance，3000h/月 |
+| Cloud SQL | 250-350 | db-f1-micro，300 GB storage |
+| Cloud Scheduler | 50 | 2 個 job |
+| Cloud Logging | 50-100 | 100 GB logs/月 |
+| Artifact Registry | 50 | 1 GB docker image |
+| Cloud DNS | 20 | 4 zone + queries |
+| Cloud Load Balancer | 100-150 | per rule + data |
+| **合計** | **~820-1,370 NTD** | 比 Cloudflare+Railway ~500 NTD 高，但統一管理 |
+
+### 9. 後果
+
+- **正向**：
+  - 企業級基礎設施（SLA 99.95%）
+  - 自動擴展與負載均衡無需手工維運
+  - Cloud SQL 自動備份 + SSL 強制
+  - 監控與日誌一套（Cloud Logging）
+  - Secret Manager 集中管理機密
+- **負向**：
+  - GCP 學習曲線（但文件充分）
+  - 月費較 Railway + Cloudflare 高 ~500 NTD
+  - 鎖定 GCP 生態（但中立、不像 Vercel / Render 有其他限制）
+- **Phase 2 平滑升級**：
+  - 若需要 Cloud SQL 讀副本（高可用），GCP 支援無縫加副本
+  - 若需要 Firestore（NoSQL），GCP 內部集成最佳
+
+### 10. 迴避策略
+
+- **不用 App Engine**：Cloud Run 更彈性、cold start 快（3-5s vs 10-20s）
+- **不用 GKE（Kubernetes）**：Pilot 量小，Cloud Run serverless 足夠；Phase 2 若量爆炸再評估
+- **不用 Firebase Hosting**：Cloud Storage + CDN 更細粒度控制
+
+---
+
+## 附錄：決策相依圖（v3.1 更新）
 
 ```
 ADR-001 (技術棧) ⚠️ 部分推翻
    ├─→ ADR-002 (結構)
-   ├─→ ADR-003 (DB: Supabase)
-   │      ├─→ ADR-005 (tenant_id 靠 Supabase RLS)
-   │      └─→ ADR-012 (M6 物化視圖)
+   ├─→ ❌ ADR-003 (DB: Supabase Cloud) → ✅ 翻轉為 GCP Cloud SQL
+   │      ├─→ ADR-005 (tenant_id 靠 PostgreSQL RLS)
+   │      ├─→ ADR-012 (M6 物化視圖 on PostgreSQL)
+   │      └─→ ❌ ADR-014 (Magic Link) → 新增 ✅ ADR-015 (帳密+後台建用戶)
    ├─→ ADR-004 (LLM: Gemini + LiteLLM)
    │      ├─→ ADR-009 (摘要快取策略)
-   │      └─→ ADR-010 (Compliance Layer 2 LLM 覆核)
-   │             └─→ ADR-011 (HITL 流程)
-   └─→ ADR-013 (🆕 前端改 React + Vite，推翻 ADR-001 前端決策)
+   │      ├─→ ADR-010 (Compliance Layer 2 LLM 覆核)
+   │      │   └─→ ⬆️ ADR-017 (規則庫 DB+pgvector 升級)
+   │      └─→ ADR-011 (⚠️ v3.0.1 修訂：教練即審核者，無外部 Reviewer)
+   └─→ ADR-013 (React+Vite 前端)
+       └─→ ✨ ADR-018 (部署改 GCP，修訂 ADR-013）
 
 ADR-006 (M1 延後)  ── 影響 PRD Epic 範圍
 ADR-007 (M5/M6 延後) ── ⚠️ 部分推翻：ADR-012 將 M6 輕量版復活
-ADR-008 (LINE 提醒) ── 影響 Epic D US-D03
-ADR-010 (Compliance) ── 影響所有產生對外文字的 endpoint
-ADR-011 (HITL) ── 影響 Epic E + UX 增加「審核中」狀態
+⬆️ ADR-008 (LINE 提醒) ── 升級為 ADR-016 (LINE/WhatsApp/Email 三通道)
+ADR-010 (Compliance) ── ⬆️ 升級為 ADR-017 (語意比對+pgvector)
+ADR-011 (教練審核) ── 教練草稿流程，無外部審核
 ADR-012 (M6 輕量) ── 影響 Epic F + 新增 Leader 視角頁面群
-ADR-013 (React+Vite) ── 影響部署平台、環境變數、dev 工作流
+ADR-013 (React+Vite) ── ⬆️ 修訂為 ADR-018 (GCP 部署)
+❌ ADR-014 (Magic Link) ── 廢棄，改用 ADR-015
+✨ ADR-015 (帳密登入) ── 新增 M0 認證，所有端點基礎依賴
+✨ ADR-016 (多通道) ── 新增 Notification 層級 fallback
+✨ ADR-017 (語意規則庫) ── 升級 Compliance 準確度
+✨ ADR-018 (GCP 部署) ── 統一雲端基礎設施
 ```
+
+---
+
+**版本履歷**
+
+| 版本 | 日期 | 變更 |
+| :--- | :--- | :--- |
+| v1.0 | 2026-04-24 | 初版（ADR-001～013） |
+| v3.0.1 | 2026-05-08 | 新增 ADR-014 (Magic Link Auth)；修訂 ADR-011 (教練即審核者) |
+| **v3.1** | **2026-05-08** | **5 項重大翻轉：DB 改 PostgreSQL/GCP、認證改帳密+後台建用戶、通知加 WhatsApp、規則庫 DB+pgvector、部署改 GCP（新增 ADR-015~018）** |

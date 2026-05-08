@@ -1,20 +1,32 @@
 # API 設計規範 — Synergy AI Closer's Copilot
 
-> **版本:** v3.0 | **更新:** 2026-05-08 | **狀態:** 實作基準 | **對應架構:** `docs/04_architecture.md` | **對應 Phase I MVP:** `docs/12_phase1_mvp.md`
+> **版本:** v3.1 | **更新:** 2026-05-08 | **狀態:** 實作基準 | **對應架構:** `docs/04_architecture.md` | **對應 Phase I MVP:** `docs/12_phase1_mvp.md` | **⚠️ v3.1 重大修訂：Magic Link 廢棄 → 帳密登入；新增 Admin endpoints；新增 WhatsApp webhook；新增合規規則 CRUD**
 
 ---
 
-## v3.0 修訂說明
+## v3.1 重大修訂說明（2026-05-08）
 
-本版本升級為 Phase I v3.0，新增約 20 個 endpoint：
-- **ComplianceService** — 4 個（檢查、改寫、隊列、HITL 決策）
-- **ConversationCoachService** — 3 個（商談前/中/後）
-- **LeaderSummaryService** — 3 個（Summary、Coach 詳情、Onboarding）
-- **OnboardingProgressService** — 1 個（任務完成）
-- **GoogleCalendarAdapter** — 1 個（同步日曆）
-- **ActivityTrackingService** — 1 個（教練統計）
+⚠️ **五大改動**：
 
-**總端點數**：約 25 → 45 個
+1. **認證改帳密**（❌ Magic Link → ✅ bcrypt 帳密 + JWT）：
+   - 移除 `/auth/magic-link`、`/auth/callback`
+   - 新增 `/auth/login`（email + password）、`/auth/change-password`、`/auth/logout`
+   - JWT 構成同：access 1h + refresh 7d
+
+2. **新增 Admin endpoints**（系統管理員後台）：
+   - `/admin/users`（CRUD）、`/admin/users/:id/reset-password`
+   - `/admin/compliance-rules`（CRUD）、`/admin/compliance-rules/import`（CSV 批量）、`/admin/compliance-rules/regenerate-embeddings`
+
+3. **新增 WhatsApp webhook**：
+   - `POST /webhooks/whatsapp`（Meta 回呼、訊息確認）
+
+4. **規則庫端點升級**：
+   - `/compliance/rules`（GET/POST/PATCH/DELETE）— 管理 compliance_rules 表
+
+5. **消息草稿端點（已存在，見 Draft Review）**：
+   - `/drafts`（GET/PATCH）— 教練查看與審核草稿
+
+**端點變化**：~48（v3.0）→ ~65+（v3.1）（新增 17+ admin + rule + webhook）
 
 ---
 
@@ -25,10 +37,10 @@
 | **風格** | RESTful + JSON |
 | **Base URL** | Production: `https://api.synergy-ai.tw/v1` / Staging: `https://api-staging.synergy-ai.tw/v1` |
 | **格式** | `application/json` (UTF-8) |
-| **資源路徑** | 小寫、連字符、複數（e.g., `/leads`、`/questionnaire-templates`） |
+| **資源路徑** | 小寫、連字符、複數（e.g., `/leads`、`/compliance-rules`） |
 | **欄位命名** | `snake_case` |
 | **日期格式** | ISO 8601 UTC（e.g., `2026-05-01T14:00:00Z`） |
-| **認證** | Supabase JWT in `Authorization: Bearer <jwt>` |
+| **認證** | JWT in `Authorization: Bearer <jwt>`（httpOnly cookie 同時支援） |
 | **版本控制** | URL 路徑 `/v1/...` |
 | **Tenant** | 由 JWT 的 `tenant_id` claim 決定，不在 URL |
 
@@ -36,632 +48,419 @@
 
 ## 2. 通用行為
 
-### 分頁 / 排序 / 過濾 / 冪等性
-
-（維持既有，見原 v1.0 文件）
+（維持既有 v1.0 規範：分頁、排序、過濾、冪等性）
 
 ---
 
 ## 3. 錯誤處理
 
-（維持既有，新增 `compliance_review_required` 錯誤碼）
-
 | 錯誤碼 | HTTP | 描述 |
 | :--- | :--- | :--- |
-| `compliance_review_required` | 202 | 訊息已存入 HITL，等待審核（人工複核中） |
+| `draft_pending_review` | 202 | 訊息已存入草稿待教練審核 |
+| `invalid_credentials` | 401 | 帳密錯誤或未登入 |
+| `account_locked` | 429 | 帳號因暴力破解被鎖定 |
+| `permission_denied` | 403 | 缺乏 admin 權限 |
 
 ---
 
 ## 4. 安全性
 
-（維持既有）
+（維持既有 v1.0 規範 + v3.1 新增）
+
+### 認證層
+
+- **帳密登入**：bcrypt hash (cost=12)，密碼 ≥10 字元（數字 + 字母）
+- **JWT**：HS256 簽章，claim 包含 `user_id, role, tenant_id`
+- **暴力破解防護**：失敗 5 次 → 15min 鎖定
+- **首次登入**：強制改密碼（`must_change_password = true`）
+
+### 授權層
+
+- **Admin endpoints**：僅 role=admin 可存取 `/admin/*`
+- **Draft privacy**：coach 只看自己草稿；leader 無草稿存取權（隱私）
 
 ---
 
 ## 5. API 端點清單
 
-### 既有端點（v1.0 維持不變）
+### ✨ 5.1 認證（Auth）— 公開 + 需登入（v3.1 改帳密）
 
-5.1 問卷（Questionnaire） — 無需登入
-5.2 商談摘要（Briefing）— 需教練登入
-5.3 客戶管理（Leads / CRM）— 需教練登入
-5.4 提醒（Reminders）— 內部 + 教練查詢
-5.5 LINE 綁定 Webhook（Coach onboarding）
-5.6 認證（Auth）— Supabase 直接提供
+#### `POST /v1/auth/login` — 帳密登入
 
-（詳見原 v1.0 文件 § 5.1-5.6）
-
----
-
-### 5.7 新增：合規檢查（Compliance）— 內部 + 審核員
-
-#### `POST /v1/compliance/check` — 同步檢查文字
-
-- **授權**：內部調用（from BriefingService、ReminderService 等）或 JWT（Admin/Leader）
+- **授權**：無（公開）
 - **請求體**：
-  
-```json
-{
-  "text": "本產品可以治療糖尿病",
-  "context": "briefing | invitation | reminder | conversation"
-}
-```
-
-- **回應**：`200 OK` → `ComplianceCheckResult`
 
 ```json
 {
-  "risk_level": "high",
-  "risk_type": "C1",
-  "rewritten_text": "本產品可幫助關注血糖健康",
-  "needs_hitl": true,
-  "confidence": 0.95,
-  "rules_matched": ["C1_medical_claim_cure"]
+  "email": "coach@synergy-ai.tw",
+  "password": "SecurePass123!"
 }
 ```
 
-**說明**：
-- `risk_level: low/medium/high`
-- `risk_type: C1/C2/C3/C4/None`
-- `needs_hitl: true` → 進入 HITL 佇列
-- `confidence` 是 LLM 判定的信心度
-
-#### `POST /v1/compliance/rewrite` — 改寫不安全文字
-
-- **授權**：內部調用或 JWT（Admin）
-- **請求體**：
-  
-```json
-{
-  "original_text": "100% 有效，立即見效",
-  "risk_type": "C3"
-}
-```
-
-- **回應**：`200 OK` → `{ "rewritten_text": "許多使用者回饋有感" }`
-
-#### `GET /v1/compliance/logs` — 查詢合規日誌（Leader / Admin 權限）
-
-- **授權**：JWT（Leader/Admin）
-- **查詢參數**：
-  - `coach_id`：教練篩選
-  - `risk_level`：low/medium/high
-  - `risk_type`：C1/C2/C3/C4
-  - `from`、`to`：日期範圍
-  - `page`、`page_size`
-- **回應**：`200 OK` → 分頁列表
-
-```json
-{
-  "data": [
-    {
-      "id": "clog_01HWX...",
-      "original_text": "治療糖尿病",
-      "risk_type": "C1",
-      "risk_level": "high",
-      "rewritten_text": "幫助關注血糖健康",
-      "reviewed_by": "reviewer_01HWX...",
-      "reviewed_at": "2026-05-01T14:00:00Z",
-      "decision": "approved",
-      "created_at": "2026-05-01T13:30:00Z"
-    }
-  ],
-  "pagination": { "page": 1, "page_size": 25, "total": 127 }
-}
-```
-
-#### `GET /v1/compliance/logs/:id` — 單筆詳情
-
-- **授權**：JWT（Leader/Admin）
-- **回應**：`200 OK` → 單筆合規日誌（詳細欄位同上）
-
----
-
-### 5.8 新增：HITL 待審隊列（Compliance Queue）— Leader / Admin 權限
-
-#### `GET /v1/compliance/queue` — 待審佇列
-
-- **授權**：JWT（Leader/Admin）
-- **查詢參數**：
-  - `status`：pending / reviewing / resolved
-  - `risk_level`：low/medium/high
-  - `page`、`page_size`
-- **回應**：`200 OK` → 分頁列表
-
-```json
-{
-  "data": [
-    {
-      "id": "cq_01HWX...",
-      "original_text": "月入 20 萬保證",
-      "risk_level": "high",
-      "risk_type": "C2",
-      "context": "invitation",
-      "coach_id": "coach_01HWX...",
-      "coach_name": "阿明",
-      "rewritten_suggestion": "月收入潛力佳",
-      "status": "pending",
-      "created_at": "2026-05-01T13:00:00Z",
-      "expires_at": "2026-05-01T13:30:00Z"
-    }
-  ],
-  "pagination": { "page": 1, "page_size": 25, "total": 8 }
-}
-```
-
-**說明**：`expires_at` 是 30min SLA，超時應觸發告警給主管。
-
-#### `POST /v1/compliance/queue/:id/approve` — 批准改寫版本
-
-- **授權**：JWT（Leader/Admin）
-- **請求體**：
-  
-```json
-{
-  "feedback": "改寫版本合理"
-}
-```
-
-- **回應**：`200 OK` → `{ "status": "approved", "message": "已通過，訊息可發送" }`
-- **副作用**：更新 `compliance_logs.decision = approved`、`compliance_queue.status = resolved`
-
-#### `POST /v1/compliance/queue/:id/reject` — 拒絕改寫
-
-- **授權**：JWT（Leader/Admin）
-- **請求體**：
-  
-```json
-{
-  "feedback": "內容有風險，建議教練重新撰寫"
-}
-```
-
-- **回應**：`200 OK` → `{ "status": "rejected", "message": "已拒絕，教練需重新編寫" }`
-- **副作用**：教練端顯示「遭拒，理由：…」+ 重新編寫按鈕
-
-#### `POST /v1/compliance/queue/:id/rewrite` — 由審核員改寫
-
-- **授權**：JWT（Leader/Admin）
-- **請求體**：
-  
-```json
-{
-  "rewritten_text": "使用本產品有機會改善健康狀況",
-  "feedback": "改為更中立表述"
-}
-```
-
-- **回應**：`200 OK` → `{ "status": "modified", "rewritten_text": "..." }`
-
-#### `POST /v1/compliance/queue/batch-review` — 批量審核
-
-- **授權**：JWT（Leader/Admin）
-- **請求體**：
-  
-```json
-{
-  "queue_ids": ["cq_01HWX...", "cq_02HWX..."],
-  "action": "approve",
-  "feedback": "批量確認通過"
-}
-```
-
-- **回應**：`200 OK` → `{ "processed": 2, "succeeded": 2, "failed": 0 }`
-
----
-
-### 5.9 新增：商談副駕駛（Conversation Coach）— 教練權限
-
-#### `GET /v1/leads/:id/conversation/pre` — 商談前摘要
-
-- **授權**：JWT（該 lead 所屬 coach）
-- **回應**：`200 OK` → `ConversationPlan (pre)`
-
-```json
-{
-  "id": "conv_01HWX...",
-  "lead_id": "lead_01HWX...",
-  "phase": "pre",
-  "content": {
-    "pain_points": [
-      "連續 6 週睡眠 < 6 小時",
-      "過去試過 2 次減重都失敗",
-      "家族糖尿病史"
-    ],
-    "opening_suggestion": "王小姐妳好，謝謝妳填寫問卷。我看到妳的睡眠狀況有點挑戰…",
-    "warm_up_questions": [
-      "這段時間睡眠狀況怎麼樣？",
-      "妳之前試過什麼改善方法嗎？"
-    ]
-  },
-  "generated_at": "2026-05-01T10:00:00Z"
-}
-```
-
-#### `GET /v1/leads/:id/conversation/in-session` — 商談中話術
-
-- **授權**：JWT（該 lead 所屬 coach）
-- **回應**：`200 OK` → `ConversationPlan (in_session)`
-
-```json
-{
-  "id": "conv_01HWX...",
-  "lead_id": "lead_01HWX...",
-  "phase": "in_session",
-  "content": {
-    "product_connection": [
-      "根據妳的睡眠問題，我推薦產品 A（含褪黑激素），許多朋友用了都有回饋…",
-      "我們也有配套方案，結合營養與運動…"
-    ],
-    "objection_responses": [
-      {
-        "objection": "朋友吃了沒效",
-        "response": "每個人體質不同，建議先試用 2 週，看身體反應。如果沒有感受，我們可以調整…"
-      },
-      {
-        "objection": "價格有點貴",
-        "response": "我理解預算考量。其實我們有分期方案，算起來月費只要…"
-      }
-    ],
-    "closing_invitation": [
-      "不如妳先試試，我相信會有幫助",
-      "要不要我先給妳預留一份？"
-    ]
-  },
-  "generated_at": "2026-05-01T10:00:00Z"
-}
-```
-
-#### `GET /v1/leads/:id/conversation/post` — 商談後訊息
-
-- **授權**：JWT（該 lead 所屬 coach）
-- **回應**：`200 OK` → `ConversationPlan (post)`
-
-```json
-{
-  "id": "conv_01HWX...",
-  "lead_id": "lead_01HWX...",
-  "phase": "post",
-  "content": {
-    "follow_up_message": "王小姐，謝謝妳今天的時間！我們聊到妳的睡眠問題和減重目標。我相信我們的產品組合能幫妳。建議妳先試用 2 週，到時我再跟妳確認反應如何。48 小時後我再跟妳聯絡，ok？",
-    "next_action": "提醒客戶試用 2 週",
-    "suggested_reminder": {
-      "kind": "48h",
-      "due_at": "2026-05-03T14:00:00Z"
-    }
-  },
-  "generated_at": "2026-05-01T14:00:00Z"
-}
-```
-
----
-
-### 5.10 新增：Leader Summary & Coach 詳情 — Leader 權限
-
-#### `GET /v1/leader/summary` — Leader Summary 頁
-
-- **授權**：JWT（Leader）
-- **查詢參數**：
-  - `period`：week（預設）/ month / custom
-  - `from`、`to`（custom 時）
 - **回應**：`200 OK`
 
 ```json
 {
-  "period": "week",
-  "week_start": "2026-04-28T00:00:00Z",
-  "funnel": {
-    "coaches": [
-      {
-        "coach_id": "coach_01HWX...",
-        "coach_name": "阿明",
-        "questionnaires_count": 12,
-        "conversations_count": 5,
-        "conversions_count": 1,
-        "conversion_rate": 0.20
-      },
-      {
-        "coach_id": "coach_02HWX...",
-        "coach_name": "阿傑",
-        "questionnaires_count": 8,
-        "conversations_count": 2,
-        "conversions_count": 0,
-        "conversion_rate": 0.0
-      }
-    ]
+  "user": {
+    "id": "user_01HWX...",
+    "email": "coach@synergy-ai.tw",
+    "role": "coach",
+    "name": "阿明",
+    "tenant_id": "tenant_01HWX...",
+    "must_change_password": false
   },
-  "onboarding_snapshot": [
-    {
-      "coach_id": "coach_03HWX...",
-      "coach_name": "小美",
-      "days_since_onboarded": 5,
-      "completion_percentage": 30,
-      "completed_tasks": ["使用摘要 3 次"],
-      "pending_tasks": ["完成首個成交", "邀約 20+ 客戶"]
-    }
-  ],
-  "high_risk_statistics": {
-    "c1_triggers": 2,
-    "c2_triggers": 1,
-    "c3_triggers": 4,
-    "c4_triggers": 0,
-    "total_triggers": 7
-  }
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
+  "expires_in": 3600
 }
 ```
 
-#### `GET /v1/leader/coaches/:id` — 單一教練詳情
+- **說明**：
+  - 驗證成功 → JWT 核發 + httpOnly cookie 設置
+  - 若 `must_change_password = true` → 自動跳轉 `/auth/change-password`（強制改密）
+  - 失敗 5 次 → 回應 429 account_locked（15min 解除）
 
-- **授權**：JWT（該教練的 Leader）
-- **回應**：`200 OK`
+#### `POST /v1/auth/change-password` — 改密碼
 
-```json
-{
-  "coach_id": "coach_01HWX...",
-  "coach_name": "阿明",
-  "role": "中階教練",
-  "stats": {
-    "week": {
-      "questionnaires": 12,
-      "conversations": 5,
-      "conversions": 1,
-      "conversion_rate": 0.20,
-      "follow_up_rate": 0.85
-    },
-    "month": {
-      "questionnaires": 40,
-      "conversations": 15,
-      "conversions": 3,
-      "conversion_rate": 0.20,
-      "follow_up_rate": 0.82
-    }
-  },
-  "trend_7d": [
-    { "date": "2026-05-01", "conversions": 0 },
-    { "date": "2026-05-02", "conversions": 1 },
-    { "date": "2026-05-03", "conversions": 0 },
-    { "date": "2026-05-04", "conversions": 0 },
-    { "date": "2026-05-05", "conversions": 0 }
-  ],
-  "briefing_usage_count": 12,
-  "high_risk_triggers": {
-    "c1": 1,
-    "c2": 0,
-    "c3": 2,
-    "c4": 0
-  }
-}
-```
-
-#### `GET /v1/leader/coaches/:id/onboarding` — 新手教練進度
-
-- **授權**：JWT（該教練的 Leader）
-- **回應**：`200 OK`
-
-```json
-{
-  "coach_id": "coach_03HWX...",
-  "coach_name": "小美",
-  "onboarded_at": "2026-04-28T00:00:00Z",
-  "days_in_program": 10,
-  "completion_percentage": 30,
-  "tasks": [
-    {
-      "task_id": "briefing_3_times",
-      "name": "使用摘要 3 次",
-      "target": 3,
-      "current": 3,
-      "completed_at": "2026-05-02T14:00:00Z",
-      "status": "completed"
-    },
-    {
-      "task_id": "first_conversion",
-      "name": "完成首個成交",
-      "target": 1,
-      "current": 0,
-      "completed_at": null,
-      "expected_by": "2026-05-28T00:00:00Z",
-      "status": "pending"
-    },
-    {
-      "task_id": "invite_20_customers",
-      "name": "邀約 20+ 客戶",
-      "target": 20,
-      "current": 12,
-      "completed_at": null,
-      "expected_by": "2026-05-28T00:00:00Z",
-      "status": "pending"
-    }
-  ],
-  "can_assign_tasks": true
-}
-```
-
-#### `POST /v1/onboarding/tasks/:id/complete` — 標記任務完成（Leader 分派用）
-
-- **授權**：JWT（Leader）
+- **授權**：JWT（必須）
 - **請求體**：
-  
+
 ```json
 {
-  "evidence": "客戶已簽約"
+  "old_password": "OldPass123!",
+  "new_password": "NewPass456!",
+  "confirm_password": "NewPass456!"
 }
 ```
 
-- **回應**：`200 OK` → 更新 `onboarding_tasks.completed_at`、推送通知給教練
+- **回應**：`200 OK` → `{ "message": "密碼已更新" }`
+- **說明**：
+  - 新密碼政策同上（≥10 字、數字 + 字母）
+  - 若首次登入（`must_change_password = true`），改密後標記為 false
+  - 舊密碼驗證失敗 → 401
 
----
+#### `POST /v1/auth/refresh` — 刷新 Token
 
-### 5.11 新增：教練統計（Activity Tracking）— 教練 + Leader
+- **授權**：無（用 refresh token via cookie 或 request body）
+- **請求體**（可選，若用 cookie 則不需）：
 
-#### `GET /v1/coaches/:id/stats` — 教練個人 KPI
+```json
+{
+  "refresh_token": "eyJ..."
+}
+```
 
-- **授權**：JWT（本人或其 Leader）
-- **查詢參數**：
-  - `period`：today / week（預設）/ month
+- **回應**：`200 OK` → 新的 access_token
+
+```json
+{
+  "access_token": "eyJ...",
+  "expires_in": 3600
+}
+```
+
+#### `GET /v1/auth/me` — 取得當前使用者
+
+- **授權**：JWT（必須）
 - **回應**：`200 OK`
 
 ```json
 {
-  "coach_id": "coach_01HWX...",
-  "period": "week",
-  "stats": {
-    "questionnaires_count": 12,
-    "conversations_count": 5,
-    "conversions_count": 1,
-    "conversion_rate": 0.20,
-    "follow_up_rate": 0.85,
-    "briefing_usage_count": 12,
-    "briefing_usage_rate": 1.0
+  "user": {
+    "id": "user_01HWX...",
+    "email": "coach@synergy-ai.tw",
+    "role": "coach | leader | admin",
+    "name": "阿明",
+    "tenant_id": "tenant_01HWX...",
+    "created_at": "2026-04-01T00:00:00Z"
   }
 }
 ```
 
----
+#### `POST /v1/auth/logout` — 登出
 
-### 5.12 新增：Google Calendar 同步（提醒）— 內部呼叫
-
-#### `POST /v1/reminders/:id/sync-calendar` — 推同步事件
-
-- **授權**：內部調用（from ReminderService）
-- **請求體**：無（用 reminder_id）
-- **回應**：`200 OK` → `{ "calendar_event_id": "event_01HWX...", "synced": true }`
-- **副作用**：建立 Google Calendar 事件，記錄 event_id 到 `reminders.google_calendar_event_id`
-
-#### `POST /v1/integrations/google/oauth/callback` — Google OAuth 回呼
-
-- **授權**：無（OAuth 回呼）
-- **查詢參數**：`code` (Google auth code)、`state` (CSRF token)
-- **回應**：`302 Redirect` → `/settings?calendar=authorized`
-- **副作用**：儲存 refresh token 到 Supabase，準備未來同步
-
----
-
-## 6. 資料模型（v3.0 補充）
-
-### 新增：`ComplianceLog`
+- **授權**：JWT（必須）
+- **請求體**：
 
 ```json
 {
-  "id": "clog_01HWX...",
-  "object": "compliance_log",
-  "original_text": "本產品可治療糖尿病",
-  "risk_type": "C1 | C2 | C3 | C4 | None",
-  "risk_level": "low | medium | high",
-  "rewritten_text": "本產品可幫助關注血糖健康",
-  "context": "briefing | invitation | reminder | conversation",
-  "coach_id": "coach_01HWX...",
-  "reviewed_by": "reviewer_01HWX...",
-  "reviewed_at": "2026-05-01T14:00:00Z",
-  "decision": "approved | rejected | modified",
-  "created_at": "2026-05-01T13:30:00Z"
+  "all_devices": false
 }
 ```
 
-### 新增：`ComplianceQueueItem`
-
-```json
-{
-  "id": "cq_01HWX...",
-  "object": "compliance_queue",
-  "text": "月入 20 萬保證",
-  "risk_level": "high",
-  "risk_type": "C2",
-  "context": "invitation",
-  "coach_id": "coach_01HWX...",
-  "status": "pending | reviewing | resolved",
-  "created_at": "2026-05-01T13:00:00Z",
-  "expires_at": "2026-05-01T13:30:00Z"
-}
-```
-
-### 新增：`ConversationPlan`
-
-```json
-{
-  "id": "conv_01HWX...",
-  "object": "conversation_plan",
-  "lead_id": "lead_01HWX...",
-  "phase": "pre | in_session | post",
-  "content": {
-    "pain_points": ["..."],
-    "opening_suggestion": "...",
-    "product_connection": ["..."],
-    "objection_responses": [{ "objection": "...", "response": "..." }],
-    "follow_up_message": "..."
-  },
-  "generated_at": "2026-05-01T10:00:00Z"
-}
-```
-
-### 新增：`OnboardingTask`
-
-```json
-{
-  "id": "ot_01HWX...",
-  "object": "onboarding_task",
-  "coach_id": "coach_01HWX...",
-  "task_id": "briefing_3_times | first_conversion | invite_20_customers",
-  "completed_at": "2026-05-02T14:00:00Z",
-  "assigned_by": "leader_01HWX...",
-  "priority": 1,
-  "expected_by": "2026-05-28T00:00:00Z"
-}
-```
+- **回應**：`200 OK` → `{ "message": "已登出" }`
+- **說明**：清除 httpOnly cookie + 若 `all_devices: true` 則清除所有 refresh token
 
 ---
 
-## 7. 權限矩陣（v3.0 擴充）
+### ✨ 5.2 管理員後台（Admin）— 需 admin 權限（v3.1 新增）
 
-| 端點 | Coach | Leader（下線） | Admin | 合規官員 |
-| :--- | :--- | :--- | :--- | :--- |
-| `/compliance/check` | ✅（內部） | ✅（內部） | ✅ | — |
-| `/compliance/logs` | ❌ | ✅ | ✅ | ✅ |
-| `/compliance/queue` | ❌ | ✅ | ✅ | ✅ |
-| `/compliance/queue/:id/*` | ❌ | ✅ | ✅ | ✅ |
-| `/conversation/pre` | ✅（自己的 lead） | ❌ | ✅ | — |
-| `/conversation/in-session` | ✅（自己的 lead） | ❌ | ✅ | — |
-| `/conversation/post` | ✅（自己的 lead） | ❌ | ✅ | — |
-| `/leader/summary` | ❌ | ✅ | ✅ | — |
-| `/leader/coaches/:id` | ❌ | ✅（下線） | ✅ | — |
-| `/leader/coaches/:id/onboarding` | ❌ | ✅（下線） | ✅ | — |
-| `/coaches/:id/stats` | ✅（自己） | ✅（下線） | ✅ | — |
-| `/onboarding/tasks/:id/complete` | ✅ | ✅（授權者） | ✅ | — |
-| `/reminders/:id/sync-calendar` | — | — | ✅（內部） | — |
+#### `GET /v1/admin/users` — 列出所有教練
 
----
-
-## 8. 狀態碼與錯誤
-
-**新增 HTTP 202 Accepted**：
+- **授權**：JWT（role=admin）
+- **Query 參數**：`page=1&limit=20&role=coach&name=阿&status=active`
+- **回應**：`200 OK`
 
 ```json
 {
-  "status": 202,
-  "error": {
-    "type": "compliance_review_required",
-    "message": "訊息已進入人工審核，待審核員確認。SLA 30 分鐘內。"
+  "users": [
+    {
+      "id": "user_01HWX...",
+      "email": "coach@synergy-ai.tw",
+      "name": "阿明",
+      "role": "coach",
+      "status": "active | inactive | locked",
+      "failed_login_count": 0,
+      "locked_until": null,
+      "created_at": "2026-04-01T00:00:00Z"
+    }
+  ],
+  "pagination": {
+    "total": 50,
+    "page": 1,
+    "limit": 20,
+    "pages": 3
   }
 }
 ```
 
+#### `POST /v1/admin/users` — 建立新教練帳號
+
+- **授權**：JWT（role=admin）
+- **請求體**：
+
+```json
+{
+  "email": "new_coach@synergy-ai.tw",
+  "name": "新教練",
+  "role": "coach | leader | admin",
+  "password": "InitialPass123!"
+}
+```
+
+- **回應**：`201 Created`
+
+```json
+{
+  "user": {
+    "id": "user_01HWX...",
+    "email": "new_coach@synergy-ai.tw",
+    "name": "新教練",
+    "role": "coach",
+    "must_change_password": true,
+    "created_at": "2026-05-08T00:00:00Z"
+  }
+}
+```
+
+- **說明**：
+  - 初始密碼由 admin 設定或系統隨機生成
+  - 新用戶 `must_change_password = true`
+  - 首次登入時強制改密碼
+
+#### `PATCH /v1/admin/users/:id` — 編輯教練帳號
+
+- **授權**：JWT（role=admin）
+- **請求體**：
+
+```json
+{
+  "name": "新名字",
+  "role": "leader",
+  "status": "active | inactive | locked"
+}
+```
+
+- **回應**：`200 OK` → 更新後的 user 物件
+
+#### `DELETE /v1/admin/users/:id` — 刪除教練帳號
+
+- **授權**：JWT（role=admin）
+- **說明**：邏輯刪除（狀態改 `deleted`），保留稽核記錄
+- **回應**：`204 No Content`
+
+#### `POST /v1/admin/users/:id/reset-password` — 強制重設密碼
+
+- **授權**：JWT（role=admin）
+- **請求體**：
+
+```json
+{
+  "new_password": "ResetPass123!"
+}
+```
+
+- **回應**：`200 OK` → `{ "message": "密碼已重設", "must_change_password": true }`
+- **說明**：教練下次登入時需改此初始密碼
+
+#### `GET /v1/admin/compliance-rules` — 列出合規規則
+
+- **授權**：JWT（role=admin）
+- **Query 參數**：`page=1&limit=50&category=C1&enabled=true`
+- **回應**：`200 OK`
+
+```json
+{
+  "rules": [
+    {
+      "id": "rule_01HWX...",
+      "category": "C1",
+      "phrase": "保證治療",
+      "severity": "high",
+      "suggested_rewrite": "可幫助關注",
+      "embedding_model": "gemini",
+      "enabled": true,
+      "created_by": "admin_id",
+      "created_at": "2026-04-01T00:00:00Z"
+    }
+  ],
+  "pagination": { "total": 200, "page": 1, "limit": 50 }
+}
+```
+
+#### `POST /v1/admin/compliance-rules` — 新增合規規則
+
+- **授權**：JWT（role=admin）
+- **請求體**：
+
+```json
+{
+  "category": "C1",
+  "phrase": "新禁用詞",
+  "severity": "high",
+  "suggested_rewrite": "建議改寫方案"
+}
+```
+
+- **回應**：`201 Created` → 新規則（含自動產生的 embedding）
+
+#### `PATCH /v1/admin/compliance-rules/:id` — 編輯規則
+
+- **授權**：JWT（role=admin）
+- **請求體**：（同新增，任何欄位都可改）
+- **回應**：`200 OK` → 更新後的規則 + 重新產生 embedding
+
+#### `DELETE /v1/admin/compliance-rules/:id` — 刪除規則
+
+- **授權**：JWT（role=admin）
+- **回應**：`204 No Content`
+
+#### `POST /v1/admin/compliance-rules/import` — CSV 批量匯入規則
+
+- **授權**：JWT（role=admin）
+- **Content-Type**：`multipart/form-data`
+- **Form 欄位**：
+  - `file`: CSV 檔案（columns: category, phrase, severity, suggested_rewrite）
+
+**CSV 格式**：
+```
+category,phrase,severity,suggested_rewrite
+C1,保證治療,high,可幫助關注
+C1,保證療效,high,可能有幫助
+C2,月收百萬,high,月入十多萬
+```
+
+- **回應**：`200 OK`
+
+```json
+{
+  "imported": 100,
+  "updated": 10,
+  "failed": 0,
+  "errors": []
+}
+```
+
+#### `POST /v1/admin/compliance-rules/regenerate-embeddings` — 重算所有 embedding
+
+- **授權**：JWT（role=admin）
+- **說明**：當更換 embedding 模型時，重新產生所有規則的向量
+- **回應**：`200 OK` → `{ "regenerated": 200, "failed": 0 }`
+
 ---
 
-## 9. 版本演進政策
+### 5.3 既有端點（v1.0 ~ v3.0 維持）
 
-（維持既有）
+5.3.1 問卷（Questionnaire） — 無需登入
+5.3.2 商談摘要（Briefing）— 需教練登入
+5.3.3 客戶管理（Leads / CRM）— 需教練登入
+5.3.4 提醒（Reminders）— 內部 + 教練查詢
+5.3.5 LINE 綁定 Webhook（Coach onboarding）
+5.3.6 合規檢查（Compliance）— 內部 + 教練決策
+5.3.7 消息草稿（Message Drafts）— 教練查看與編輯
+
+（詳見 v3.0 文件或對應模組詳規 `docs/06_modules.md`）
 
 ---
 
-**文件統計**
+### ✨ 5.4 Webhook — 外部服務回呼（v3.1 新增 WhatsApp）
 
-| 項目 | 數量 |
-| :--- | ---: |
-| 既有端點（v1.0） | ~25 |
-| 新增端點（v3.0） | ~20 |
-| **總計** | **~45** |
-| 資料模型 | 新增 4 個 |
-| 權限矩陣 | 擴充至 8 角色 × 12 端點 |
+#### `POST /webhooks/whatsapp` — WhatsApp 訊息回呼
+
+- **授權**：無（Webhook 驗證 via HMAC-SHA256）
+- **驗證**：
+  - 請求頭 `X-Hub-Signature` 包含 HMAC-SHA256(body, WHATSAPP_VERIFY_TOKEN)
+  - 需與 Meta Dashboard 設定的 verify token 匹配
+
+**Meta 發送格式**（Webhook body）：
+
+```json
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "...",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "1234567890",
+              "phone_number_id": "..."
+            },
+            "statuses": [
+              {
+                "id": "wamid.xxx",
+                "status": "delivered | read | failed | sent",
+                "timestamp": 1234567890,
+                "recipient_id": "..."
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+- **說明**：
+  - `statuses` → 記錄訊息送達狀態
+  - 若 status = "failed" → log event + trigger fallback channel（Email）
+  - 無需回應 body，回 200 即可（Meta 預期快速回應 ≤ 3s）
+
+#### `GET /webhooks/whatsapp` — Webhook 驗證（初始化時）
+
+- **Query 參數**：`hub.mode=subscribe&hub.challenge=...&hub.verify_token=...`
+- **回應**：若 token 正確 → `200 OK` 並回應 hub.challenge；否則 403
+
+---
+
+## 6. 權限矩陣（v3.1 更新）
+
+| Endpoint | Public | Coach | Leader | Admin | 說明 |
+|---|---|---|---|---|---|
+| `/auth/login` | ✅ | — | — | — | 帳密登入 |
+| `/auth/change-password` | — | ✅ | ✅ | ✅ | 改密碼 |
+| `/auth/me` | — | ✅ | ✅ | ✅ | 查自己資料 |
+| `/admin/users` | — | — | — | ✅ | Admin CRUD |
+| `/admin/compliance-rules` | — | — | — | ✅ | 規則管理 |
+| `/questionnaires/*` | ✅ | — | — | — | 公開填答 |
+| `/leads` | — | ✅ | ✅ | — | Lead 列表（Coach 看自己；Leader 看下線） |
+| `/leads/:id` | — | ✅ | ✅ | — | Lead 詳情 |
+| `/leader/summary` | — | — | ✅ | — | Leader 看下線統計 |
+| `/drafts` | — | ✅ | — | — | 教練看自己草稿 |
+| `/webhooks/whatsapp` | ✅ | — | — | — | Meta 回呼（HMAC 驗證） |
 
 ---
 
@@ -669,6 +468,5 @@
 
 | 版本 | 日期 | 變更 |
 | :--- | :--- | :--- |
-| v1.0 | 2026-04-24 | 基礎 API（問卷/摘要/CRM/提醒/認證）~25 端點 |
-| v2.0 | — | （未發布） |
-| **v3.0** | **2026-05-08** | **新增 Compliance、HITL、Conversation、Leader、Activity、Google Calendar 端點 ~20 個，合計 ~45** |
+| v3.0.1 | 2026-05-08 | 新增 Auth endpoints（Magic Link）；新增 Draft endpoints；移除 HITL queue endpoints |
+| **v3.1** | **2026-05-08** | **改帳密登入（廢棄 Magic Link）；新增 Admin CRUD endpoints；新增 WhatsApp webhook；新增合規規則 CRUD；總端點 ~48 → ~65+** |

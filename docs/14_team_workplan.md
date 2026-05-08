@@ -1,18 +1,18 @@
 # 三人團隊分工計畫 — Phase I MVP
 
-> **版本:** v1.0 | **更新:** 2026-05-08
-> **對應規格:** [12_phase1_mvp.md](./12_phase1_mvp.md) | [06_modules.md](./06_modules.md) | [03_adr.md](./03_adr.md)
-> **目的：** 把 17 個模組依能力比重 50/30/20（或 60/30/10）分到三人，並透過明確的模組邊界讓三人能平行開發、降低相互阻塞。
+> **版本:** v3.1 | **更新:** 2026-05-08 | **對應規格:** [12_phase1_mvp.md](./12_phase1_mvp.md) | [06_modules.md](./06_modules.md) | [03_adr.md](./03_adr.md)
+> **⚠️ v3.1 修訂**：D2 取代 Magic Link AuthService → PasswordAuthService + UserManagementService + ComplianceRuleService + WhatsAppChannel + alembic；D3 新增 admin UI 兩頁；D1 新增 SemanticMatcher
+> **目的：** 把 21 個模組依能力比重分到三人，並透過明確的模組邊界讓三人能平行開發、降低相互阻塞。
 
 ---
 
-## 0. 摘要
+## 0. 摘要（v3.0.1 更新）
 
-| 角色 | 比重 | 主負責模組 | 全週時數 |
-| :--- | :---: | :--- | :---: |
-| **D1 Lead Engineer** | 50-60% | M2 三階段問卷 + AI 摘要、M3 商談副駕駛、Compliance + HITL（含 LLM 抽象層）| 35-40 hr/週 |
-| **D2 Mid Engineer** | 30% | M4 CRM + Reminder、Google Calendar、ScoringEngine、共用 Domain types | 20-25 hr/週 |
-| **D3 Junior Engineer** | 10-20% | M1 Lead 入口、M6 Leader Summary + Onboarding、共用前端元件、UI 組裝 | 10-15 hr/週 |
+| 角色 | 比重 | 主負責模組 | 全週時數 | 變化 |
+| :--- | :---: | :--- | :--- | :--- |
+| **D1 Lead Engineer** | 50-60% | M2 三階段問卷 + AI 摘要、M3 商談副駕駛、Compliance（簡化無佇列） | 35-40 hr/週 | ⬇️ 移除 HITL |
+| **D2 Mid Engineer** | 30% | **M0 AuthService（新）** + M4 CRM + Reminder、Google Calendar、ScoringEngine、共用 Domain types | 20-25 hr/週 | ⬆️ **新增 Auth** |
+| **D3 Junior Engineer** | 10-20% | M1 Lead 入口、M6 Leader Summary + Onboarding + **DraftReviewService UI**、共用前端元件 | 10-15 hr/週 | ⬆️ **草稿決策 UI** |
 
 **模組獨立原則**：每位開發者負責的模組之間，後端走 Application Service 介面（非 DB 直連）、前端走 React Router 巢狀路由 + 共用 hooks 包裝。
 
@@ -24,33 +24,34 @@
 
 | 維度 | D1 拿什麼 | D2 拿什麼 | D3 拿什麼 |
 | :--- | :--- | :--- | :--- |
-| **AI / LLM 含量** | 高（M2 摘要、M3 話術、Compliance 覆核） | 低（純資料邏輯） | 低（讀現成資料展示）|
-| **業務複雜度** | 高（合規規則、HITL 流程）| 中（10 種狀態機、Calendar 整合）| 低（CRUD + UI 組裝）|
-| **外部依賴** | LLM API、Compliance 詞庫 | LINE / Email / Google Calendar | 無（純內部）|
-| **失敗風險** | 高（影響核心 KPI）| 中（影響跟進執行率）| 低（影響可觀測性）|
+| **AI / LLM 含量** | 高（M2 摘要、M3 話術、Compliance 覆核） | **中（M0 Auth 含 Magic Link 不涉 LLM，純認證邏輯）** | 低（讀現成資料展示）|
+| **業務複雜度** | 高（合規規則、三層檢查） | 中（10 種狀態機、OAuth、Auth flow）| 低（Draft UI + CRUD）|
+| **外部依賴** | LLM API、合規詞庫 | **Supabase Auth + Google Calendar + LINE** | 無（純內部 UI）|
+| **失敗風險** | 高（影響核心 KPI）| 中（影響登入與跟進執行率）| 低（影響 UX 流暢度）|
 
-### 1.2 為什麼 D1 拿最多 AI 模組
+### 1.2 為何 D2 拿 M0 AuthService（v3.0.1 新）
 
-- LLM 整合與 prompt engineering 是「秘密武器」，集中一人累積經驗值
-- Compliance/HITL 是合規責任核心，集中一人決策減少風險
-- M2 + M3 + Compliance 三模組共享同一套 LLMAdapter 與 prompt 管理，集中一人寫不重工
+- **Magic Link + JWT** 是純認證邏輯，無 LLM 但牽涉密碼學與 OAuth flow
+- D2 已掌握 Google Calendar OAuth，Auth flow 學習曲線相近
+- M0 是「基礎」，D1 的後續模組都依賴 JWT 驗證，集中 D2 確保一致性
+- 估工：3-4 天內完成（含 Resend 信寄、Magic Link 驗證、JWT 管理、refresh token 邏輯）
 
-### 1.3 為什麼 D2 拿 M4 + Calendar
+### 1.3 為何 D1 簡化 Compliance（無 HITL 佇列）
 
-- M4 是「水管工程」（資料流轉 + 狀態機 + 多通道 fanout），需要工程能力但不需 AI
-- Google Calendar OAuth 與 LINE Messaging 是純整合活，可讓 D2 鍛鍊外部 API 整合
-- 與 D1 的 AI 模組透過 `LeadCreated` / `BriefingGenerated` 事件解耦
+- v3.0.1 移除「外部 Reviewer 審核佇列」邏輯
+- ComplianceService 只保留：規則庫初篩 → LLM 改寫 → quality 驗證 → 寫草稿
+- 不再需要「SLA 計時、佇列管理、escalation email」，減少 D1 負擔 ~20%
 
-### 1.4 為什麼 D3 拿 M1 + M6
+### 1.4 為何 D3 新增 DraftReviewService UI
 
-- M1（邀請文案、私訊草稿）是 LLM call + 簡單 UI，D3 可學 LLM 但難度低
-- M6 Leader Summary 主要是讀物化視圖 + 圖表展示，純前端 + 簡單 API
-- Onboarding 是 YAML 驅動的 checklist，邏輯極簡
-- D3 順帶當「前端共用元件管家」（按鈕、表格、Modal），整合三人成果
+- **教練決策草稿頁** （`/coaches/me/drafts`）是 v3.0.1 核心新增
+- D3 負責前端 UI：草稿卡片清單、編輯抽屜、送出/丟棄按鈕、計數徽章
+- 後端由 D2 提供 Draft API，D3 純前端消費
+- 估工：2-3 天（相對簡單，主要是 React 狀態管理）
 
 ---
 
-## 2. 模組分配明細
+## 2. 模組分配明細（v3.0.1）
 
 ### 2.1 D1 Lead（50-60%）— AI 與合規核心
 
@@ -58,46 +59,49 @@
 | :--- | :--- | :--- | :--- |
 | **M2 QuestionnaireService** | `application/questionnaire/`（含三階段路由）| `routes/public/questionnaire.tsx` | Phase 1/2/3 動態題目、計分整合 ScoringEngine（D2 給介面）|
 | **M2 BriefingService（雙版摘要）** | `application/briefing/` | （資料來源）| 客戶版 + 教練版，30s 內輸出 |
-| **M3 ConversationCoachService** | `application/conversation_coach/` | `routes/coach/conversation-{pre,in-session,post}.tsx` | 三段話術 prompt + 5s 內 |
-| **ComplianceService（ADR-010）** | `application/compliance/` | （內部）| 三層防線、規則庫熱載、LLM 二次覆核 |
-| **HITLService（ADR-011）** | `application/hitl/` | `routes/compliance/queue.tsx`（資料 API）| 佇列 + SLA worker + reviewer actions |
+| **M3 ConversationCoachService** | `application/conversation_coach/` | `routes/coach/conversation-{pre,in-session,post}.tsx` | 三段話術 prompt + 5s 內；話術進草稿 |
+| **ComplianceService（ADR-010）** | `application/compliance/` | （內部）| 三層防線、規則庫熱載、LLM 改寫、品質驗證；改寫版進 Draft（無佇列） |
+| ~~HITLService~~ | ~~（已淘汰）~~ | — | ~~佇列 + SLA + Reviewer 審核~~ **改為 DraftReviewService 後端（見下）** |
 | **LLMAdapter / Prompt 管理** | `packages/llm/`、`apps/api/.../infrastructure/llm/` | — | LiteLLM 抽象、prompt 版控、token / latency 記錄 |
 | **EventLog Service** | `application/event_log/` | — | 全模組共用，D1 提介面，D2/D3 直接呼叫 |
 
-**D1 額外職責**：技術仲裁、code review、ADR 維護、與客戶法務 / Reviewer 對接（HITL 流程演練）。
+**D1 額外職責**：技術仲裁、code review、ADR 維護、與客戶合規 / 教練對接（Draft 流程演練）。
 
 ---
 
-### 2.2 D2 Mid（30%）— 資料與整合
+### **✨ 2.2 D2 Mid（30%）— 認證、資料與整合（v3.0.1 新增 Auth）**
 
 | 模組 | 後端檔案 | 前端頁面 | 關鍵交付 |
 | :--- | :--- | :--- | :--- |
-| **M4 LeadService（CRM）** | `application/lead/` | `routes/coach/leads.tsx`、`lead-detail.tsx`（D3 收尾 UI）| CRUD + 10 種狀態機 |
+| **✨ M0 AuthService（新）** | **`application/auth/`** | **`routes/auth/{login,callback}.tsx`** | **Magic Link 登入、JWT 管理、role 驗證、登出；Resend Email** |
+| **M4 LeadService（CRM）** | `application/lead/` | `routes/coach/leads.tsx`、`lead-detail.tsx` | CRUD + 10 種狀態機 |
 | **M4 LeadStatusMachine** | `domain/lead/status_machine.py` | — | 10 種狀態的合法轉換規則 |
-| **M4 ReminderService + Scheduler** | `application/reminder/`、`infrastructure/scheduler/` | `routes/coach/reminders.tsx`（D3 收尾 UI）| 48h/7d/30d 排程、APScheduler |
+| **M4 ReminderService + Scheduler** | `application/reminder/`、`infrastructure/scheduler/` | `routes/coach/reminders.tsx` | 48h/7d/30d 排程、APScheduler |
 | **M4 NotificationChannel 群** | `infrastructure/notifications/`（line / email）| — | LINE 主 + Email 備援 + fallback 路由 |
-| **GoogleCalendarAdapter（ADR-008/012）** | `infrastructure/google_calendar/` | OAuth 入口頁（簡單）| OAuth flow + 事件 CRUD |
-| **ScoringEngine（Domain）** | `domain/scoring/` | — | 純函式、Phase 1/2/3 計分、紅旗判定（規則 YAML 驅動）|
-| **DB Migrations（W1）** | `infrastructure/db/migrations/*.sql` | — | 8 個 migration（見 11_deployment §17）|
+| **GoogleCalendarAdapter** | `infrastructure/google_calendar/` | OAuth 入口頁（簡單）| OAuth flow + 事件 CRUD |
+| **ScoringEngine（Domain）** | `domain/scoring/` | — | 純函式、Phase 1/2/3 計分、紅旗判定 |
+| **✨ DraftReviewService（後端）** | **`application/draft/`** | **（見 D3）** | **Draft CRUD、狀態管理、決策記錄** |
+| **DB Migrations** | `infrastructure/db/migrations/*.sql` | — | 9 個 migration（含 message_drafts） |
 | **共用 Domain Types** | `packages/domain/`（Python + TS dual）| — | Customer/Lead/User/Status enum |
 
-**D2 額外職責**：Supabase RLS policy 撰寫、物化視圖維運、整合測試骨架。
+**D2 額外職責**：Supabase RLS policy 撰寫、物化視圖維運、Auth 安全稽核、Draft API 設計。
 
 ---
 
-### 2.3 D3 Junior（10-20%）— Lead 入口與 Leader 視角 + 前端整合
+### **2.3 D3 Junior（10-20%）— Lead 入口、Leader 視角、Draft UI**
 
 | 模組 | 後端檔案 | 前端頁面 | 關鍵交付 |
 | :--- | :--- | :--- | :--- |
 | **M1 InviteLinkService** | `application/invite/` | `routes/coach/invite.tsx` | 教練識別碼帶入連結、來源欄位 |
-| **M1 InviteCopyGenerator** | `application/invite/copy_generator.py`（呼叫 LLMAdapter）| 同上 | LLM 生邀請文案 + 私訊草稿（先過 ComplianceService）|
+| **M1 InviteCopyGenerator** | `application/invite/copy_generator.py` | 同上 | LLM 生邀請文案 + 私訊草稿 |
 | **M6 ActivityTrackingService** | `application/activity_tracking/` | — | EventLog 聚合（讀物化視圖）|
-| **M6 LeaderSummaryService** | `application/leader/` | `routes/leader/{summary,coach-detail}.tsx` | 讀 `mv_leader_summary` + 渲染圖表 |
-| **M6 OnboardingProgressService** | `application/onboarding/` | `routes/leader/coach-onboarding.tsx`、教練自視角頁 | YAML checklist + 完成狀態 |
-| **共用前端元件** | `apps/web/src/components/` | — | Button、Table、Modal、StatusBadge、Toast、Apple tokens 套用 |
-| **前端 UI 整合收尾** | — | D2 開過頭的 leads.tsx、reminders.tsx 等 | 樣式對齊、互動細節、loading/error state |
+| **M6 LeaderSummaryService** | `application/leader/` | `routes/leader/{summary,coach-detail}.tsx` | 讀物化視圖 + 渲染圖表 |
+| **M6 OnboardingProgressService** | `application/onboarding/` | `routes/leader/coach-onboarding.tsx`、教練自視角 | YAML checklist + 完成狀態 |
+| **✨ DraftReviewService UI（前端）** | **（見 D2）** | **`routes/coach/drafts.tsx` + Lead 詳情內 AI 建議卡片** | **待審草稿清單 UI、編輯抽屜、決策按鈕、計數徽章** |
+| **共用前端元件** | `apps/web/src/components/` | — | Button、Table、Modal、StatusBadge、Toast、Apple tokens |
+| **前端 UI 整合收尾** | — | 各頁面樣式 + 互動細節 | 樣式對齊、loading/error state |
 
-**D3 額外職責**：Storybook（可選）、前端共用 hooks（useAuth、useToast、useApi）、文件截圖與使用手冊輔助。
+**D3 額外職責**：Storybook（可選）、前端共用 hooks（useAuth、useToast、useApi）、使用手冊圖截。
 
 ---
 
@@ -105,181 +109,187 @@
 
 ### 3.1 後端：Application Service 介面契約
 
+（保持 v3.0 不變）
+
 **禁止**：跨模組直接讀寫對方的 DB 表。
 **強制**：透過 Application Service 公開的 Python protocol / interface 互動。
 
-```python
-# packages/domain/src/contracts/lead.py — 三人共用契約
-from typing import Protocol
-
-class LeadServicePort(Protocol):
-    async def create_from_questionnaire(
-        self, questionnaire_id: UUID, scoring: ScoringResult
-    ) -> Lead: ...
-
-    async def update_status(self, lead_id: UUID, status: LeadStatus) -> Lead: ...
-
-    async def get_for_briefing(self, lead_id: UUID) -> LeadDetail: ...
-```
-
-D1（QuestionnaireService）只依賴 `LeadServicePort`，D2 寫實作；單元測試各自用 mock。
-
 ### 3.2 模組間溝通：Event Bus（簡化版）
-
-避免 N×N 直接呼叫，採事件廣播：
 
 | 事件 | 發起者 | 訂閱者 |
 | :--- | :--- | :--- |
+| **✨ `UserLoggedIn`** | **D2 (AuthService)** | **D3 (ActivityTracking) → 寫 EventLog；所有模組 → 初始化 RLS context** |
 | `QuestionnaireSubmitted` | D1 (QuestionnaireService) | D2 (LeadService) → 自動建檔 |
 | `LeadCreated` | D2 (LeadService) | D1 (BriefingService) → 觸發摘要 |
 | `BriefingGenerated` | D1 (BriefingService) | D2 (NotificationChannel) → 通知教練 |
-| `ConversationLogged` | D1 (ConversationCoachService) | D2 (ReminderService) → 排 48h/7d/30d |
+| `ConversationLogged` | D1 (ConversationCoachService) | **D2 (DraftReviewService) → 寫草稿；D2 (ReminderService) → 排提醒** |
 | `LeadStatusChanged` | D2 (LeadService) | D2 (ReminderService) → 取消未發送提醒 |
 | `OutboundMessageRequested` | 任何模組 | D1 (ComplianceService) → 過濾 |
+| **`DraftSent` / `DraftDiscarded`** | **D2 (DraftReviewService)** | **D1 (ComplianceLog) → 記錄決策；D2 (NotificationChannel) → 真正送出；D3 (ActivityTracking) → 寫 EventLog** |
 | `AnyAIAction` | 任何模組 | D3 (ActivityTrackingService) → 寫 EventLog |
 
 實作：Pilot 期用 in-process pub/sub（`asyncio.Queue` 或簡易 dispatcher），Phase II 升級為 Postgres LISTEN/NOTIFY 或 Redis。
+
+---
 
 ### 3.3 前端：路由分組 + 共用 hooks
 
 ```
 src/routes/
-├── public/    ← D1 主、D3 配
-├── coach/     ← D2 主（資料邏輯）+ D3 配（UI 細節）
-├── compliance/← D1 主
-└── leader/    ← D3 主
+├── public/           ← D1 主（問卷）、D3 配
+├── auth/             ← D2 主（login / callback）
+├── coach/            ← D2 主（CRM/Reminders）、D1 主（Briefing/Conversation）、D3 主（Drafts 頁）
+└── leader/           ← D3 主
+
+src/hooks/
+├── useAuth.ts        ← D2 提供（Magic Link context）
+├── useToast.ts       ← D3 提供
+└── useApi.ts         ← D2 提供（JWT 自動附加）
 ```
-
-共用 hooks（D3 維護）：
-```typescript
-// src/lib/hooks/useApi.ts
-export function useApi<T>(endpoint: string) { /* TanStack Query 包裝 */ }
-
-// src/lib/hooks/useAuth.ts
-export function useAuth() { /* Supabase Auth + role */ }
-```
-
-任何人寫頁面只用這些 hooks，不直接 fetch、不直接讀 Supabase 客戶端。
-
-### 3.4 共用資源（D2 與 D3 共同維護）
-
-| 資源 | 主要維護者 | 變更流程 |
-| :--- | :--- | :--- |
-| `packages/domain/`（型別契約）| D2 | PR + D1 review |
-| `apps/web/src/components/`（UI 元件）| D3 | PR + D2 review |
-| `apps/api/.../rules/*.yaml`（規則檔）| D1 | PR + 客戶 sign-off（合規詞庫）|
 
 ---
 
-## 4. 4 週時程下的任務 Gantt
+## 4. 時程與里程碑
 
-```
-       W1骨架      W2 AI核心    W3 跟進閉環    W4 Pilot
-       ─────────  ─────────   ────────────  ──────────
-D1     [LLMAdapter]  [M2雙版摘要]   [Compliance]      [HITL pilot]
-        ScoringIF    [M3前段話術]   [HITL service]    [prompt 迭代]
-                     [M3中後話術]   [規則庫整合]      [bug 修]
+### **Week 1：Auth + 問卷骨架**
 
-D2     [DB migrations][LeadService]  [Reminder排程]   [整合測試]
-       [10 狀態機]   [Notif channel] [Calendar]       [監控告警]
-       [ScoringEngine][M2-M4 串接]  [RLS policy]
+| 天 | 工作項 | Owner | 預估 | 產出 |
+| :--- | :--- | :---: | :---: | :--- |
+| **D1** | M0 AuthService（Magic Link + JWT） | **D2** | **3-4h** | 登入 endpoint + session 管理 |
+| D1 | M2 Phase 1/2/3 問卷骨架 + ScoringEngine 初版 | D1 | 4h | 三階段路由 + 計分規則 |
+| D2 | M4 LeadStatusMachine + Customer schema | D2 | 3h | 10 種狀態機 |
+| D3 | ComplianceService 規則庫 YAML v1（客戶交付） | D1 | 2h | C1/C2/C3/C4 詞表 |
+| **D5** | **Magic Link + 問卷完整流程集成測試** | **D1+D2** | — | 教練能登入 → 填問卷 |
 
-D3     [前端骨架]   [M1 Invite]    [Leader Summary]  [前端 polish]
-       [shared UI]  [共用元件]      [Onboarding]      [UAT 配合]
-                                   [前端整合 D2 頁]
-```
+### Week 2：AI 核心 + 草稿流程
 
-詳細週任務見 [11_deployment.md §17 Migration 順序](./11_deployment.md) 與 [12_phase1_mvp.md §開發里程碑](./12_phase1_mvp.md)。
+| 天 | 工作項 | Owner | 預估 | 產出 |
+| :--- | :--- | :---: | :---: | :--- |
+| D1-D2 | M2 雙版摘要 + M3 商談話術完整 | D1 | 6h | 摘要 & 話術進草稿 |
+| **D2-D3** | **DraftReviewService（後端 + 前端 UI）** | **D2 + D3** | **4h** | **待審草稿清單頁 + 編輯決策** |
+| D2 | M4 CRM + 10 狀態 + CRUD | D2 | 4h | LeadService 完整 |
+| D1 | ComplianceService Layer 1-3 完整（LLM 改寫 + 品質驗證） | D1 | 5h | 自動重生成邏輯 + 草稿寫入 |
+| **D5** | **Draft 流程端到端測試**：話術 → 進草稿 → 教練決策 → 送出 | **D1+D2+D3** | — | Demo 完成 |
+
+### Week 3：跟進 + Leader + 整合
+
+| 天 | 工作項 | Owner | 預估 | 產出 |
+| :--- | :--- | :---: | :---: | :--- |
+| D1-D2 | M4 48h/7d/30d 提醒 + Google Calendar | D2 | 4h | 排程 + 日曆同步 |
+| D3 | M6 Leader Summary + Onboarding + Activity | D3 | 4h | 漏斗 + 新手進度 |
+| **D1+D2+D3** | **全系統集成測試 + 教練培訓準備** | — | 4h | Pilot 準備就緒 |
+| D1 | EventLog 埋點完整 + Sentry 接入 | D1 | 2h | 可觀測 |
+| **D5** | **Pilot 3-5 教練上線、首日監控** | **All** | — | 實時反饋 |
 
 ---
 
-## 5. 同步與溝通機制
+## 5. 風險與緩解
 
-### 5.1 例行會議
-
-| 會議 | 頻率 | 出席 | 議題 |
+| 風險 | 影響 | 緣故 | 緩解 |
 | :--- | :--- | :--- | :--- |
-| **Daily Standup** | 每日 09:30 | D1/D2/D3 | 15 min：昨日 / 今日 / blocker |
-| **Weekly Demo** | 週五 16:00 | + PM | 30 min：本週可 demo 功能 |
-| **介面契約變更會** | 每週一 11:00（必要時）| D1/D2 | 變更 `packages/domain/` 前討論 |
-| **與客戶同步** | 週一 09:30 | PM + 客戶窗口 | 30 min：交付清單進度（[13_client_deliverables.md](./13_client_deliverables.md)）|
-
-### 5.2 共用看板
-
-- GitHub Projects 或 Linear（任一）
-- 看板欄位：Backlog / In Progress / Review / Done
-- 每張卡標 `D1` / `D2` / `D3` owner 標籤
-
-### 5.3 PR 規則
-
-| 規則 | 說明 |
-| :--- | :--- |
-| 跨模組改動 | 必須 D1 review |
-| 改 `packages/domain/` 或 contracts | 必須 D1 + D2 雙 review |
-| 前端共用元件改動 | 必須 D3 review |
-| 純自己模組內改動 | 一人 review 即可（互相 review）|
-| 上線前 | 全員至少 sanity check |
+| **R-07** | 魔術連結寄送失敗 | **Resend Email 服務不穩定** | 本地測試 + Resend 雙通道（SMTP fallback） + 告警 |
+| **R-08** | Draft 決策流程混亂 | 教練對「何時送出」理解不清 | UI 提示明確（徽章 + 提醒）+ W2 培訓演練 + 文件 |
+| R-09 | ComplianceService 重生成無窮迴圈 | LLM 品質驗證卡住 | 設定最多 3 次 retry，超過標 `quality_failed` 交教練決策 |
+| R-10 | D2 Auth 與 D1 Compliance JWT 簽章不一致 | 獨立實作導致 key 差異 | D2 Auth 用 Supabase 內建簽章，所有模組讀同一 JWT |
 
 ---
 
-## 6. 風險與緩解
+## 6. 溝通計畫
 
-| 風險 | 影響 | 緩解 |
+### 每日站會（9:30 AM，15 min）
+
+- 昨日完成、今日計畫、卡點
+- 若卡點涉多人，快速 breakout
+
+### 每週同步（Friday 4 PM，1h）
+
+- 週回顧（進度、品質、學習）
+- 下週規劃 + 風險更新
+
+### 與客戶（weekly）
+
+- PM + Tech Lead 與客戶對齊：題庫、詞庫、人員確認
+- Pilot 教練培訓（W2 D4）
+
+---
+
+**版本履歷**
+
+| 版本 | 日期 | 變更 |
 | :--- | :--- | :--- |
-| D1 過載（拿太多模組）| 進度落後 | W1 結束評估，必要時把 HITL UI 推給 D3、Compliance YAML 載入給 D2 |
-| D2 與 D1 介面不對齊 | 整合卡關 | 強制 W1 D3 前完成 `packages/domain/` 契約 freeze |
-| D3 經驗不足卡前端 | UI 不一致 | 第一週由 D2 配對程式設計（pair programming）2 hr/天 |
-| Compliance 詞庫客戶遲交 | M2/M3 上線阻塞 | D1 W1 用假詞庫先開發，W2 切換真詞庫 |
-| Google Calendar OAuth 卡審核 | M4 提醒缺一通道 | D2 先做純 LINE/Email 提醒，Calendar 標 P1 可延 W4 上 |
-| 三人都不熟 LLM prompt | 摘要品質差 | D1 W0 先做 1 天 prompt 實驗、產出 prompt 模板給其他人沿用 |
+| v1.0 | 2026-05-08 | 初版三人分工（D1 50% / D2 30% / D3 20%） |
+| **v3.0.1** | **2026-05-08** | **⚠️ D2 新增 AuthService（M0，3-4 天）；D1 簡化 Compliance（無 HITL）；D3 新增 DraftReviewService UI；新增 UserLoggedIn 事件；時程調整；新增 Email 寄送風險 R-07** |
+| **v3.1** | **2026-05-08** | **⚠️ 五大架構翻轉同步（見下方 v3.1 補丁段）：D2 重構 Auth 為 PasswordAuthService + 加 UserManagementService / ComplianceRuleService / WhatsAppChannel / alembic；D3 加 admin UI；D1 加 SemanticMatcher；模組數 18→21**|
 
 ---
 
-## 7. 能力培養路徑（讓比重逐漸均衡）
+## ⚠️ v3.1 補丁（2026-05-08）— 模組重新分配
 
-Phase I 結束後，期望比重從 50/30/20 趨向 40/35/25：
+### v3.1 模組差異表
 
-| 人 | Phase I 學到 | Phase II 可承擔 |
+| 模組 | v3.0.1 owner | v3.1 owner | 變更 |
+| :--- | :---: | :---: | :--- |
+| ~~AuthService（Magic Link）~~ | D2 | — | ❌ 廢棄（ADR-014）|
+| **PasswordAuthService** | — | **D2** | ✨ 新增（取代上者）|
+| **UserManagementService** | — | **D2** | ✨ 新增（admin user CRUD）|
+| **ComplianceRuleService** | — | **D2** | ✨ 新增（規則庫 CRUD + embedding 計算）|
+| **SemanticMatcher** | — | **D1** | ✨ 新增（向量相似度純函式）|
+| **WhatsAppChannel** | — | **D2** | ✨ 新增（Meta Business API + webhook）|
+| ~~Supabase Auth client~~ | D2 | — | ❌ 移除（換 SQLAlchemy + asyncpg）|
+| **DB 維運（docker-compose + Cloud SQL + alembic）**| D2（Supabase 部分）| **D2（升級全自管）**| ⚠️ 工作量增 |
+| **Admin UI（/admin/users + /admin/compliance-rules）**| — | **D3** | ✨ 新增 |
+
+### v3.1 D2 工作量重估
+
+D2 在 v3.0.1 比重 30%，v3.1 增加：
+- PasswordAuthService（取代 Magic Link，估 2 天 — 比 Magic Link 簡單）
+- UserManagementService + admin_audit_logs（估 2 天）
+- ComplianceRuleService + embedding 計算（估 3 天）
+- WhatsAppChannel + webhook + HMAC 驗證（估 2 天）
+- alembic 遷移工具 + Cloud SQL Auth Proxy（估 1 天）
+
+合計 **+10 天工作量**，4 週時程下平均每週 +2.5 天。建議 D2 比重從 30% 拉到 35%，或把以下任務分給 D1/D3：
+- WhatsAppChannel 可分給 D1（與 ComplianceService 整合熟悉度高）
+- UserManagementService 後端 + admin UI 前端可由 D2/D3 結對
+
+### v3.1 D3 工作量增量
+
+新增 admin UI 兩頁：
+- `/admin/users`：CRUD 列表（簡單 CRUD UI，估 2 天）
+- `/admin/compliance-rules`：含 CSV 批量匯入 dropzone（估 3 天，較複雜）
+
+D3 比重從 10-20% → 維持 20%，但 onboarding 進度頁可後挪到 W3。
+
+### v3.1 D1 工作量增量
+
+新增 SemanticMatcher（純函式 + Gemini embedding 整合，估 2 天）+ ComplianceService Layer 1 升級為「字面 + 向量近似」雙階（估 1 天）。
+
+D1 仍 50-60%，無顯著增量（Compliance 已熟）。
+
+### v3.1 事件 Bus 補充
+
+| 新增事件 | 發起者 | 訂閱者 |
 | :--- | :--- | :--- |
-| D1 | 全棧整合經驗 | 轉技術 leader 但減少 hands-on 比例 |
-| D2 | LLM 整合（pair programming D1） | 接手 ConversationCoach 之一段話術 |
-| D3 | 前端架構 + 簡單 LLM call | 接手 M1 完整 + 配對 D2 一個資料模組 |
+| `AdminAction` | D2 (UserManagement, ComplianceRuleService) | D2 (admin_audit_logs persistence) |
+| `ComplianceRuleChanged` | D2 (ComplianceRuleService) | D2 (re-compute embedding async)、D1 (ComplianceService cache invalidation) |
+| `WhatsAppMessageReceived` | D2 (webhook handler) | D2 (NotificationChannel 對應 lead) |
 
----
+### v3.1 共用資源更新
 
-## 8. 工具與環境
+| 資源 | 主維護者 | 變更 |
+| :--- | :---: | :--- |
+| `apps/api/.../infrastructure/db/sqlalchemy/`（取代 supabase client）| D2 | ✨ 新增 |
+| `apps/api/.../infrastructure/db/migrations/alembic/`（取代 Supabase migration）| D2 | ✨ 新增 |
+| `packages/llm/embeddings/`（Gemini text-embedding 整合）| D1 | ✨ 新增 |
+| `apps/web/src/lib/auth/`（替換 Supabase Auth 為自寫 token 管理）| D2 | ⚠️ 重寫 |
+| ~~Supabase RLS policy 撰寫~~ | D2 | 維持（但目標 DB 改 Cloud SQL）|
 
-| 用途 | 工具 |
-| :--- | :--- |
-| 程式版控 | GitHub（monorepo）|
-| CI/CD | GitHub Actions |
-| 任務管理 | GitHub Projects 或 Linear（擇一）|
-| 即時溝通 | LINE 群（已有）+ Slack（可選）|
-| 文件 | 本 docs/ 目錄（PR 同步）|
-| 設計協作 | Pencil MCP（design/）+ Figma（如客戶用）|
-| API 測試 | Bruno 或 Insomnia（共享 collection）|
-| LLM 實驗 | Jupyter Notebook（D1 的 sandbox）|
+### v3.1 風險表新增
 
----
-
-## 附錄：模組與 owner 對照速查表
-
-| 模組（[06_modules.md](./06_modules.md)）| Owner | 備援 |
-| :--- | :---: | :---: |
-| QuestionnaireService | D1 | D2 |
-| ScoringEngine | D2 | D1 |
-| BriefingService | D1 | — |
-| ConversationCoachService | D1 | — |
-| ComplianceService | D1 | — |
-| HITLService | D1 | D3（UI）|
-| LeadService | D2 | D3（UI）|
-| LeadStatusMachine | D2 | — |
-| ReminderService | D2 | — |
-| ReminderScheduler | D2 | — |
-| NotificationChannel | D2 | — |
-| GoogleCalendarAdapter | D2 | — |
-| LLMAdapter | D1 | — |
-| ActivityTrackingService | D3 | D2 |
-| LeaderSummaryService | D3 | — |
-| OnboardingProgressService | D3 | — |
-| InviteLinkService / CopyGenerator (M1) | D3 | D1 |
+| ID | 風險 | 影響 | 緩解 |
+| :--- | :--- | :--- | :--- |
+| R-08 | GCP 帳號 / billing 設定延誤（Q-013）| HIGH | 我方代開可在 1 天內完成；客戶開放至少需 W0 D5 |
+| R-09 | WhatsApp Business 審核 > 7 天 | MED | 並行 LINE + Email 上線；WhatsApp 補在 W4 |
+| R-10 | pgvector 在 Cloud SQL 啟用問題 | LOW | Cloud SQL for PostgreSQL 14+ 預設支援；先在 staging 驗證 |
+| R-11 | 規則庫 embedding 重算量大拖累 API | MED | 改 async 後台任務（Cloud Tasks）；分批每 100 條一次 |
+| R-12 | D2 工作量超載（v3.1 +10 天）| HIGH | WhatsAppChannel 改派 D1；admin UI 提早給 D3 開工 |

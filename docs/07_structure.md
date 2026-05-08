@@ -1,7 +1,7 @@
 # 專案結構指南 — Synergy AI Closer's Copilot
 
-> **版本:** v3.0 | **更新:** 2026-05-08
-> **對應架構決策：** ADR-002（扁平 monorepo）、ADR-013（前端改 React + Vite）、ADR-010/011/012（Phase I 新模組）
+> **版本:** v3.1 | **更新:** 2026-05-08
+> **對應架構決策：** ADR-002（扁平 monorepo）、ADR-013（前端改 React + Vite）、ADR-015/016/017/018（v3.1 新增認證、WhatsApp、規則 DB、GCP）
 
 ---
 
@@ -44,6 +44,7 @@ synergy/
 ├── .env.example
 ├── .gitignore
 ├── .gitattributes
+├── docker-compose.yml          # ✨ v3.1 新增：本地 PostgreSQL 17 + pgvector
 ├── pnpm-workspace.yaml         # pnpm workspace
 ├── package.json                # 根層（scripts 統一入口）
 ├── uv.lock                     # Python workspace lock
@@ -69,7 +70,14 @@ apps/web/
 │   │   │   ├── questionnaire-page.tsx    # GET /q/:token
 │   │   │   └── questionnaire-complete.tsx # GET /q/:token/complete
 │   │   ├── auth/
-│   │   │   └── callback.tsx             # Supabase Magic Link 回調
+│   │   │   ├── login-page.tsx            # ✨ v3.1 帳密登入頁
+│   │   │   └── change-password.tsx       # ✨ v3.1 首次強制改密
+│   │   ├── admin/              # ✨ v3.1 新增：系統管理員後台
+│   │   │   ├── users-page.tsx
+│   │   │   ├── users-create.tsx
+│   │   │   ├── users-edit.tsx
+│   │   │   ├── compliance-rules-page.tsx
+│   │   │   └── compliance-rules-import.tsx
 │   │   ├── coach/              # Protected routes
 │   │   │   ├── leads-page.tsx           # GET /leads
 │   │   │   ├── lead-detail-page.tsx     # GET /leads/:id
@@ -79,8 +87,6 @@ apps/web/
 │   │   │   │   └── post-followup.tsx    # GET /leads/:id/conversation/post
 │   │   │   ├── customer-summary.tsx     # GET /leads/:id/summary/customer
 │   │   │   └── reminders-page.tsx       # GET /reminders
-│   │   ├── compliance/
-│   │   │   └── queue-page.tsx           # GET /compliance/queue
 │   │   └── leader/
 │   │       ├── summary-page.tsx         # GET /leader/summary
 │   │       ├── coach-detail-page.tsx    # GET /leader/coaches/:id
@@ -98,16 +104,18 @@ apps/web/
 │   │   │   ├── BriefingView.tsx
 │   │   │   ├── PainPointList.tsx
 │   │   │   └── ProductRecommendation.tsx
-│   │   ├── compliance/
-│   │   │   ├── ComplianceQueueItem.tsx
-│   │   │   └── HighlightedText.tsx
+│   │   ├── admin/              # ✨ v3.1 新增
+│   │   │   ├── UserManagementTable.tsx
+│   │   │   ├── UserForm.tsx
+│   │   │   ├── ComplianceRuleForm.tsx
+│   │   │   └── ComplianceRuleImportCSV.tsx
 │   │   └── common/
 │   │       ├── EmptyState.tsx
 │   │       ├── ErrorBoundary.tsx
 │   │       └── ProtectedRoute.tsx
 │   ├── lib/
 │   │   ├── api-client.ts               # Fetch wrapper（呼叫 apps/api）
-│   │   ├── supabase.ts                 # Supabase client + Auth helper
+│   │   ├── auth.ts                     # ✨ v3.1 改為帳密驗證（無 Supabase）
 │   │   └── hooks/
 │   │       ├── use-leads.ts            # React Query hooks
 │   │       ├── use-briefing.ts
@@ -130,14 +138,6 @@ apps/web/
 └── CLAUDE.md
 ```
 
-**v3.0 與 ADR-013 差異**：
-- 結構改 Vite + react-router v7（無 Next.js App Router）
-- 路由由 `routes/` 資料夾組織而非 `app/` 目錄慣例
-- 環境變數改用 `VITE_*` 前綴（而非 `NEXT_PUBLIC_*`）
-- 無 middleware.ts（Auth 改用 react-router 的 ProtectedRoute HOC）
-- React Query 用於 API 狀態管理（無 getServerSideProps）
-- SEO 用 react-helmet-async（而非 next/head）
-
 ---
 
 ## `apps/api/` — FastAPI 後端 + 排程
@@ -148,7 +148,7 @@ apps/api/
 │   ├── main.py                     # FastAPI app + APScheduler 啟動
 │   ├── core/
 │   │   ├── config.py               # pydantic-settings
-│   │   ├── auth.py                 # Supabase JWT 驗證
+│   │   ├── auth.py                 # ✨ v3.1 改為 bcrypt + JWT 驗證（無 Supabase Auth）
 │   │   ├── rate_limit.py
 │   │   ├── logging.py              # structlog 設定
 │   │   └── errors.py               # 統一錯誤格式
@@ -170,12 +170,18 @@ apps/api/
 │   │   ├── compliance/
 │   │   │   ├── compliance_log.py
 │   │   │   ├── risk_level.py
-│   │   │   └── check_category.py
-│   │   ├── hitl/
-│   │   │   └── hitl_item.py
+│   │   │   ├── check_category.py
+│   │   │   └── semantic_matcher.py  # ✨ v3.1 新增：pgvector 向量比對
 │   │   └── onboarding/
 │   │       └── onboarding_task.py
 │   ├── application/                # Application Layer
+│   │   ├── auth/                   # ✨ v3.1 新增：帳密登入 + 密碼管理
+│   │   │   ├── password_auth_service.py
+│   │   │   ├── password_hasher.py
+│   │   │   └── jwt_manager.py
+│   │   ├── admin/                  # ✨ v3.1 新增：系統管理員後台
+│   │   │   ├── user_management_service.py
+│   │   │   └── compliance_rule_management_service.py
 │   │   ├── questionnaire_service.py
 │   │   ├── briefing_service.py
 │   │   ├── lead_service.py
@@ -184,9 +190,6 @@ apps/api/
 │   │   │   ├── compliance_service.py
 │   │   │   ├── rule_engine.py
 │   │   │   └── llm_reviewer.py
-│   │   ├── hitl/
-│   │   │   ├── hitl_service.py
-│   │   │   └── queue_worker.py
 │   │   ├── conversation_coach/
 │   │   │   ├── pre_briefing.py
 │   │   │   ├── in_session_advisor.py
@@ -202,69 +205,81 @@ apps/api/
 │   ├── infrastructure/             # Infrastructure Layer
 │   │   ├── web/
 │   │   │   ├── routers/
-│   │   │   │   ├── questionnaire.py     # /v1/questionnaires/*
-│   │   │   │   ├── lead.py              # /v1/leads/*
-│   │   │   │   ├── briefing.py          # /v1/leads/{id}/briefing
-│   │   │   │   ├── reminder.py          # /v1/reminders/*
-│   │   │   │   ├── compliance.py        # /v1/compliance/*
-│   │   │   │   ├── leader.py            # /v1/leader/*
-│   │   │   │   └── internal.py          # /v1/internal/*
+│   │   │   │   ├── auth.py                # ✨ v3.1 新增：帳密登入端點
+│   │   │   │   ├── admin.py               # ✨ v3.1 新增：後台 CRUD 端點
+│   │   │   │   ├── questionnaire.py       # /v1/questionnaires/*
+│   │   │   │   ├── lead.py                # /v1/leads/*
+│   │   │   │   ├── briefing.py            # /v1/leads/{id}/briefing
+│   │   │   │   ├── reminder.py            # /v1/reminders/*
+│   │   │   │   ├── compliance.py          # /v1/compliance/*
+│   │   │   │   ├── leader.py              # /v1/leader/*
+│   │   │   │   ├── webhooks.py            # ✨ v3.1 新增：WhatsApp webhook
+│   │   │   │   └── internal.py            # /v1/internal/*
 │   │   │   └── middleware/
-│   │   │       ├── auth_middleware.py
+│   │   │       ├── auth_middleware.py     # ✨ v3.1 改為 JWT（無 Supabase）
 │   │   │       ├── rate_limit_middleware.py
 │   │   │       └── logging_middleware.py
-│   │   ├── persistence/
-│   │   │   ├── supabase_client.py
-│   │   │   ├── repositories/
-│   │   │   │   ├── questionnaire_repo.py
-│   │   │   │   ├── lead_repo.py
-│   │   │   │   ├── briefing_repo.py
-│   │   │   │   ├── reminder_repo.py
-│   │   │   │   ├── compliance_repo.py
-│   │   │   │   └── onboarding_repo.py
-│   │   │   ├── migrations/              # SQL migrations
-│   │   │   │   ├── 20260508_01_add_reviewer_role.sql
-│   │   │   │   ├── 20260508_02_create_compliance_tables.sql
-│   │   │   │   └── ... (8 份遷移檔)
-│   │   │   └── materialized_views/     # ADR-012
-│   │   │       ├── mv_coach_weekly_stats.sql
-│   │   │       └── mv_leader_summary.sql
+│   │   ├── db/                     # ✨ v3.1 改為本地 PostgreSQL + alembic
+│   │   │   ├── sqlalchemy/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── session.py         # SQLAlchemy AsyncSession
+│   │   │   │   └── models/
+│   │   │   │       ├── user.py        # Users table（新）
+│   │   │   │       ├── lead.py
+│   │   │   │       ├── questionnaire.py
+│   │   │   │       ├── compliance_rule.py  # ✨ v3.1 新增（取代 YAML）
+│   │   │   │       └── audit_log.py   # ✨ v3.1 新增
+│   │   │   └── migrations/
+│   │   │       └── alembic/            # ✨ v3.1 新增：SQLAlchemy migration tool
+│   │   │           ├── env.py
+│   │   │           ├── alembic.ini
+│   │   │           └── versions/
+│   │   │               ├── 20260508_10_pgvector_extension.sql
+│   │   │               ├── 20260508_11_compliance_rules.sql
+│   │   │               ├── 20260508_12_users_password_auth.sql
+│   │   │               └── 20260508_13_admin_audit_log.sql
 │   │   ├── llm/
 │   │   │   └── adapter.py               # 繫結 packages/llm
 │   │   ├── notifications/
-│   │   │   ├── email_channel.py         # Resend
-│   │   │   └── line_channel.py          # LINE Messaging API
+│   │   │   ├── channel.py               # 基類（改為多通道支援）
+│   │   │   ├── line_channel.py          # LINE Messaging API（主）
+│   │   │   ├── whatsapp_channel.py      # ✨ v3.1 新增：WhatsApp Business API
+│   │   │   └── email_channel.py         # Resend（備援）
 │   │   ├── google_calendar/
 │   │   │   ├── oauth_client.py
 │   │   │   └── calendar_adapter.py
 │   │   └── scheduler/
 │   │       ├── reminder_scheduler.py    # APScheduler jobs
 │   │       └── materialized_view_refresh.py
-│   └── rules/                      # 業務規則 YAML
+│   └── rules/                      # ⚠️ v3.1 迴圈：YAML 已廢棄，改用 DB compliance_rules
 │       ├── questionnaire-v1.yaml
-│       ├── compliance-keywords.yaml
 │       └── onboarding-tasks.yaml
 ├── tests/
 │   ├── conftest.py                 # 全域 fixtures
 │   ├── unit/
 │   │   ├── domain/
 │   │   │   ├── test_scoring_engine.py
-│   │   │   └── test_lead_status_machine.py
+│   │   │   ├── test_lead_status_machine.py
+│   │   │   └── test_semantic_matcher.py  # ✨ v3.1 新增
 │   │   └── application/
 │   │       ├── test_briefing_service.py
 │   │       ├── test_reminder_service.py
 │   │       ├── test_compliance_service.py
-│   │       └── test_hitl_service.py
+│   │       ├── test_password_auth_service.py  # ✨ v3.1 新增
+│   │       └── test_user_management_service.py  # ✨ v3.1 新增
 │   ├── integration/
 │   │   ├── test_questionnaire_flow.py
 │   │   ├── test_reminder_scheduler.py
-│   │   └── test_compliance_flow.py
+│   │   ├── test_compliance_flow.py
+│   │   ├── test_auth_flow.py  # ✨ v3.1 新增
+│   │   └── test_whatsapp_webhook.py  # ✨ v3.1 新增
 │   └── features/                   # pytest-bdd
 │       ├── questionnaire.feature
 │       ├── briefing.feature
 │       ├── crm.feature
 │       ├── reminder.feature
 │       ├── compliance.feature
+│       ├── auth.feature  # ✨ v3.1 新增
 │       └── steps/
 ├── pyproject.toml                  # uv 管理
 ├── .python-version                 # 3.12
@@ -285,6 +300,8 @@ packages/domain/
 │   │   ├── reminder.ts
 │   │   ├── compliance.ts
 │   │   ├── onboarding.ts
+│   │   ├── auth.ts  # ✨ v3.1 新增
+│   │   ├── user.ts  # ✨ v3.1 新增
 │   │   └── index.ts
 │   ├── package.json                # name: @synergy/domain
 │   └── tsconfig.json
@@ -297,16 +314,19 @@ packages/domain/
 │   │       ├── questionnaire.py
 │   │       ├── reminder.py
 │   │       ├── compliance.py
-│   │       └── onboarding.py
+│   │       ├── onboarding.py
+│   │       ├── auth.py  # ✨ v3.1 新增
+│   │       ├── user.py  # ✨ v3.1 新增
+│   │       └── schemas.py  # ✨ v3.1 新增：SemanticMatcher 輸入輸出
 │   └── pyproject.toml              # name: synergy-domain
 └── schemas/                        # JSON Schema 單一真相來源
     ├── lead.json
     ├── briefing.json
     ├── questionnaire.json
-    └── compliance.json
+    ├── compliance.json
+    ├── auth.json  # ✨ v3.1 新增
+    └── user.json  # ✨ v3.1 新增
 ```
-
-**同步策略**：以 `schemas/*.json` 為唯一來源，用 `datamodel-code-generator`（Python）與 `json-schema-to-typescript`（TS）雙向生成。手動改生成檔 = 違規。
 
 ---
 
@@ -376,11 +396,6 @@ modules/
     └── README.md                   # ★ 標註「已遷移，參考用」
 ```
 
-**規則**：
-- `modules/` 目錄**只讀**，不進新 PR
-- 要重用其邏輯，複製到 `apps/` 或 `packages/` 並符合新結構規範
-- 未來 Phase 2 重啟 module1（M1 獲客）時再決定是否遷移
-
 ---
 
 ## `docs/` — 專案文檔
@@ -390,7 +405,7 @@ docs/
 ├── INDEX.md                        # 文檔索引
 ├── 01_prd.md
 ├── 02_bdd.md
-├── 03_adr.md                       # 含 ADR-001 ~ ADR-013
+├── 03_adr.md                       # 含 ADR-001 ~ ADR-018（v3.1 新增）
 ├── 04_architecture.md
 ├── 05_api.md
 ├── 06_modules.md
@@ -400,6 +415,8 @@ docs/
 ├── 10_security.md
 ├── 11_deployment.md
 ├── 12_phase1_mvp.md
+├── 13_client_deliverables.md
+├── 14_team_workplan.md
 ├── adr/                            # 未來拆分後的獨立 ADR
 │   └── README.md
 └── diagrams/                       # Mermaid / PlantUML 原始檔
@@ -412,7 +429,7 @@ docs/
 ```
 scripts/
 ├── seed-dev-data.py                # 建立測試資料
-├── migrate.sh                      # Supabase migration 統一入口
+├── migrate.sh                      # ✨ v3.1 改為 alembic migration 統一入口
 ├── generate-types.sh               # schemas/*.json → TS + Python
 ├── run-bdd.sh
 └── check-env.sh
@@ -529,3 +546,139 @@ LINE_CHANNEL_ACCESS_TOKEN=xxxx
 RESEND_API_KEY=xxxx
 GOOGLE_CALENDAR_CLIENT_ID=xxxx
 ```
+
+---
+
+## ✨ v3.1 補丁（2026-05-08）
+
+### ADR-003/015/016/017/018：架構翻轉
+
+**五大變更**：
+
+#### 1. DB：Supabase → 本地 PostgreSQL + GCP Cloud SQL（ADR-003 翻轉）
+
+- **本地開發**：`docker-compose.yml` 啟動 `postgres:17` + `pgvector` image
+  - 預設 `postgresql://synergy:synergy@localhost:5432/synergy`
+  - 包含 pgvector extension 與 Healthcheck
+- **GCP 部署**：Cloud SQL（PostgreSQL 17 + pgvector 支援）
+- **Migration**：`alembic` 取代 Supabase migration
+  - 版本檔：`apps/api/src/infrastructure/db/migrations/alembic/versions/`
+  - 執行：`alembic upgrade head`
+
+#### 2. 認證：Magic Link → 帳密 + Admin 後台建用戶（ADR-015 新增）
+
+- **PasswordAuthService**（新）：`apps/api/src/application/auth/`
+  - `login(email, password)` → JWT核發
+  - `change_password(user_id, old, new)` → 密碼策略檢查（≥10字、數字+字母）
+  - `get_current_coach()` → JWT驗證（Depends）
+  - 暴力破解防護：失敗5次鎖15min
+  - 首次登入強制改密：`must_change_password = true`
+  
+- **UserManagementService**（新）：`apps/api/src/application/admin/`
+  - Admin CRUD教練帳號、重設密碼
+  - 所有操作寫`admin_audit_logs`表
+  
+- **前端**：
+  - `/login` — 帳密表單（email + password，無 Supabase Magic Link）
+  - `/auth/change-password` — 首次強制改密
+  - `/admin/users`、`/admin/users/new`、`/admin/users/:id/edit` — Admin UI
+
+#### 3. 通道：LINE → LINE/WhatsApp/Email 三層 Fallback（ADR-016 新增）
+
+- **WhatsAppChannel**（新）：`apps/api/src/infrastructure/notifications/whatsapp_channel.py`
+  - Webhook：`POST /webhooks/whatsapp` 接收 Meta 回呼
+  - 環境變數：
+    - `WHATSAPP_ACCESS_TOKEN`
+    - `WHATSAPP_PHONE_NUMBER_ID`
+    - `WHATSAPP_VERIFY_TOKEN`
+    - `WHATSAPP_BUSINESS_ACCOUNT_ID`（可選）
+  - Fallback 順序：LINE → WhatsApp → Email
+  
+- **Frontend**：
+  - F1.3 私訊開場草稿改支援 WhatsApp 格式
+
+#### 4. 規則庫：YAML → DB + pgvector 向量語意比對（ADR-017 新增）
+
+- **ComplianceRuleService**（新）：`apps/api/src/application/admin/`
+  - CRUD：`GET/POST/PATCH/DELETE /admin/compliance-rules`
+  - CSV 批量匯入：`POST /admin/compliance-rules/import`
+  - 重算 embedding：`POST /admin/compliance-rules/regenerate-embeddings`
+  
+- **SemanticMatcher**（新 Domain）：`apps/api/src/domain/compliance/semantic_matcher.py`
+  - 純函式：計算 cosine similarity > 閾值（預設 0.85）
+  - 支援多規則併行匹配
+  
+- **DB**：`compliance_rules` 表（新）
+  - 欄位：id, tenant_id, category, phrase, severity, suggested_rewrite, embedding(vector 768), enabled, created_by, updated_by, created_at, updated_at
+  - IVFFlat/HNSW 索引
+  
+- **Frontend**：
+  - `/admin/compliance-rules` — 規則列表 CRUD
+  - `/admin/compliance-rules/import` — CSV 匯入 UI
+
+#### 5. 部署：Cloudflare/Railway → GCP（ADR-018 新增）
+
+- **拓撲**：Cloud DNS → Cloud CDN → (Cloud Storage FE + Cloud Run BE) → Cloud SQL
+- **環境變數**：
+  - `GCP_PROJECT_ID`
+  - `GCP_REGION`（預設 `asia-east1`）
+  - `SECRET_MANAGER_PREFIX`（如 `synergy-`）
+- **檔案**：
+  - `Dockerfile`（apps/api 與 apps/web multi-stage）
+  - `cloudbuild.yaml` — CI/CD 定義
+  - `docker-compose.yml`（本地 dev）
+
+### DB 表結構補充（v3.1）
+
+**新欄位（users 表）**：
+- `password_hash: TEXT`（bcrypt cost=12）
+- `must_change_password: BOOLEAN DEFAULT true`
+- `failed_login_count: INT DEFAULT 0`
+- `locked_until: TIMESTAMPTZ NULL`
+
+**新表**：
+- `compliance_rules` — 規則庫
+- `admin_audit_logs` — Admin 操作稽核
+
+### 環境變數補充（v3.1）
+
+```bash
+# apps/api/.env（本地開發）
+DATABASE_URL=postgresql+asyncpg://synergy:synergy@localhost:5432/synergy
+WHATSAPP_ACCESS_TOKEN=xxx
+WHATSAPP_PHONE_NUMBER_ID=xxx
+WHATSAPP_VERIFY_TOKEN=xxx
+EMBEDDING_MODEL=models/embedding-001
+SEMANTIC_SIMILARITY_THRESHOLD=0.85
+BCRYPT_COST=12
+PASSWORD_MIN_LENGTH=10
+GCP_PROJECT_ID=synergy-dev
+SECRET_MANAGER_PREFIX=synergy-
+
+# 部署環境（GCP Cloud Run Secret Manager）
+# 同上，由 Cloud Run 注入
+```
+
+### 檔案新增清單
+
+- `docker-compose.yml` — 本地 PostgreSQL 17
+- `apps/api/src/core/auth.py` — 重寫為 bcrypt + JWT（非 Supabase）
+- `apps/api/src/application/auth/` — PasswordAuthService + 相關模組
+- `apps/api/src/application/admin/` — UserManagementService + ComplianceRuleService
+- `apps/api/src/infrastructure/db/sqlalchemy/` — SQLAlchemy 配置
+- `apps/api/src/infrastructure/db/migrations/alembic/` — 遷移管理
+- `apps/api/src/infrastructure/notifications/whatsapp_channel.py` — WhatsApp 整合
+- `apps/api/src/domain/compliance/semantic_matcher.py` — 向量語意比對
+- `apps/web/src/routes/auth/login-page.tsx` 與 `change-password.tsx`
+- `apps/web/src/routes/admin/users*.tsx` 與 `compliance-rules*.tsx`
+- `Dockerfile`（後端與前端）
+- `cloudbuild.yaml` — GCP 部署
+
+---
+
+**版本履歷**
+
+| 版本 | 日期 | 變更 |
+| :--- | :--- | :--- |
+| v3.0 | 2026-05-08 | 初版，React 19 + Vite + FastAPI |
+| **v3.1** | **2026-05-08** | **⚠️ 五項架構翻轉：DB（Supabase → PostgreSQL + GCP）、認證（Magic Link → bcrypt + Admin 後台）、通知（+ WhatsApp）、規則庫（YAML → DB + pgvector）、部署（GCP）；新增 PasswordAuthService、UserManagementService、WhatsAppChannel、SemanticMatcher** |
