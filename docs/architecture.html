@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Care Copilot — 架構與資料流總覽</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --ink:#1d1d1f; --muted:#6b7280;
+    --line:#e3e6ea; --accent:#0071e3;
+    --fe:#1e88e5; --fe-bg:#e8f2fd;
+    --be:#2e9e6b; --be-bg:#e6f6ee;
+    --data:#c8861a; --data-bg:#fdf3e2;
+    --ai:#8e44ad; --ai-bg:#f3eafa;
+    --guard:#d64545; --guard-bg:#fcebea;
+    --obs:#5a6470; --obs-bg:#eef0f3;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+    line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  header.top{
+    position:sticky; top:0; z-index:50; backdrop-filter:saturate(180%) blur(16px);
+    background:rgba(255,255,255,0.82); border-bottom:1px solid var(--line);
+  }
+  .top-inner{max-width:1080px; margin:0 auto; padding:12px 22px; display:flex; gap:18px; align-items:center; flex-wrap:wrap}
+  .top-inner b{font-size:16px}
+  nav a{color:var(--muted); text-decoration:none; font-size:13px; padding:4px 8px; border-radius:8px}
+  nav a:hover{color:var(--accent); background:var(--fe-bg)}
+  .wrap{max-width:1080px; margin:0 auto; padding:28px 22px 80px}
+  h1{font-size:30px; letter-spacing:-.5px; margin:18px 0 4px}
+  .sub{color:var(--muted); margin:0 0 8px}
+  h2{font-size:22px; margin:42px 0 6px; padding-top:8px; letter-spacing:-.3px}
+  h3{font-size:16px; margin:22px 0 6px; color:#33373d}
+  p{margin:8px 0}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px 22px; margin:14px 0; box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .mermaid{margin:6px 0; text-align:center; overflow-x:auto; cursor:zoom-in}
+  .mermaid svg{max-width:100%}
+  .note{font-size:14px; color:#444; background:#fafbfc; border-left:3px solid var(--accent); padding:10px 14px; border-radius:0 10px 10px 0; margin:12px 0}
+  .legend{display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 2px}
+  .chip{font-size:12.5px; padding:3px 11px; border-radius:999px; border:1px solid transparent; white-space:nowrap}
+  .c-fe{background:var(--fe-bg); color:var(--fe); border-color:#bcdcfb}
+  .c-be{background:var(--be-bg); color:var(--be); border-color:#bce5d1}
+  .c-data{background:var(--data-bg); color:var(--data); border-color:#f0dcb4}
+  .c-ai{background:var(--ai-bg); color:var(--ai); border-color:#e2cdf0}
+  .c-guard{background:var(--guard-bg); color:var(--guard); border-color:#f5c9c6}
+  .c-obs{background:var(--obs-bg); color:var(--obs); border-color:#d4d9df}
+
+  /* ---- CSS 鳥瞰圖（不依賴 JS，保證顯示）---- */
+  .birds{display:flex; flex-direction:column; gap:0; align-items:stretch}
+  .band{border-radius:14px; padding:14px 16px; border:1px solid}
+  .band-fe{background:var(--fe-bg); border-color:#bcdcfb}
+  .band-be{background:var(--be-bg); border-color:#bce5d1}
+  .band-data{background:var(--data-bg); border-color:#f0dcb4}
+  .band h4{margin:0 0 9px; font-size:14px; letter-spacing:.3px; display:flex; align-items:center; gap:8px}
+  .band h4 .tag{font-size:11px; font-weight:600; padding:2px 9px; border-radius:999px; background:rgba(0,0,0,.06)}
+  .boxes{display:flex; gap:8px; flex-wrap:wrap}
+  .box{background:rgba(255,255,255,.78); border:1px solid rgba(0,0,0,.08); border-radius:10px; padding:8px 12px; font-size:13px; min-width:120px}
+  .box b{display:block; font-size:13px}
+  .box span{font-size:11.5px; color:var(--muted)}
+  .arrow{align-self:center; color:var(--muted); font-size:13px; padding:7px 0; font-weight:600; letter-spacing:.5px}
+  .split{display:flex; gap:12px; flex-wrap:wrap}
+  .split > div{flex:1; min-width:240px}
+  footer{color:var(--muted); font-size:13px; text-align:center; margin-top:50px}
+  .tip{font-size:12.5px; color:var(--muted); margin-top:6px}
+  table{border-collapse:collapse; width:100%; font-size:13.5px; margin:8px 0}
+  th,td{border:1px solid var(--line); padding:7px 10px; text-align:left; vertical-align:top}
+  th{background:#fafbfc}
+  code{background:#eef0f3; padding:1px 6px; border-radius:6px; font-size:12.5px}
+
+  /* ---- 放大檢視（zoom / pan）---- */
+  .card{position:relative}
+  .zoom-badge{position:absolute; top:12px; right:14px; font-size:12px; color:var(--accent); background:var(--fe-bg); border:1px solid #bcdcfb; padding:3px 11px; border-radius:999px; cursor:zoom-in; user-select:none; z-index:3}
+  .zoom-badge:hover{background:#d8e9fb}
+  #zoomModal{position:fixed; inset:0; z-index:200; background:rgba(15,18,22,.9); display:none}
+  #zoomModal.open{display:block}
+  #zoomStage{position:absolute; inset:0; overflow:hidden; cursor:grab; touch-action:none}
+  #zoomStage.grabbing{cursor:grabbing}
+  #zoomInner{position:absolute; top:50%; left:50%; will-change:transform}
+  #zoomInner svg{display:block; background:#fff; border-radius:12px; box-shadow:0 12px 50px rgba(0,0,0,.45); max-width:none !important; height:auto}
+  .zoom-toolbar{position:fixed; top:16px; right:18px; z-index:210; display:flex; gap:8px}
+  .zoom-toolbar button{width:42px; height:42px; border-radius:11px; border:1px solid rgba(255,255,255,.28); background:rgba(255,255,255,.14); color:#fff; font-size:19px; line-height:1; cursor:pointer; -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px)}
+  .zoom-toolbar button:hover{background:rgba(255,255,255,.3)}
+  .zoom-cap{position:fixed; top:24px; left:22px; z-index:210; color:#fff; font-size:14px; opacity:.92; max-width:58vw}
+  .zoom-help{position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:210; color:#fff; font-size:12.5px; opacity:.7}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <b>🚗 Care Copilot 架構</b>
+    <nav>
+      <a href="#overview">鳥瞰</a>
+      <a href="#l1">系統情境</a>
+      <a href="#l2">容器圖</a>
+      <a href="#flow1">資料流·生草稿</a>
+      <a href="#flow2">資料流·樣品</a>
+      <a href="#flow3">資料流·問卷</a>
+      <a href="#flow-line">資料流·LINE</a>
+      <a href="#tenant">租戶隔離</a>
+      <a href="#auth">登入</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <h1>Care Copilot — 整體架構與資料流</h1>
+  <p class="sub">對應 <code>01_architecture.md</code>　|　版本 v0.1　|　2026-06-02　|　AI 層沿用既有框架</p>
+
+  <div class="legend">
+    <span class="chip c-fe">前端 / 畫面</span>
+    <span class="chip c-be">後端 / 邏輯</span>
+    <span class="chip c-data">資料 / 帳號</span>
+    <span class="chip c-ai">AI / 智慧</span>
+    <span class="chip c-guard">合規 / 守門</span>
+    <span class="chip c-obs">觀測 / 監看</span>
+  </div>
+  <p class="tip">💡 任一張圖都可<b>點擊放大</b>：開啟後用滑鼠<b>滾輪縮放</b>、<b>拖曳平移</b>，按 <b>Esc</b> 或 ✕ 關閉。</p>
+
+  <!-- ============ 0. 鳥瞰（CSS，保證顯示） ============ -->
+  <h2 id="overview">0. 一眼看懂：三層鳥瞰</h2>
+  <div class="card">
+    <p>最簡單的理解方式：由上往下三層。使用者在<b>前端</b>操作，指令送到<b>後端</b>處理，資料與 AI 在<b>底層</b>支撐。每一句要送給客戶的話，都會先經過<b style="color:var(--guard)">合規守門</b>。</p>
+    <div class="birds">
+      <div class="band band-fe">
+        <h4>📱 前端層 — 使用者手機上看到的<span class="tag">Mobile PWA</span></h4>
+        <div class="boxes">
+          <div class="box"><b>今日 5 件事</b><span>首頁 · 任務卡</span></div>
+          <div class="box"><b>客戶詳情頁</b><span>活檔案 · 草稿 · 樣品</span></div>
+          <div class="box"><b>React 19 + Vite</b><span>Tailwind v4 · Apple 風</span></div>
+          <div class="box"><b>TanStack Query</b><span>資料抓取 / 快取</span></div>
+          <div class="box" style="border-color:#06c755;background:#e8faf0"><b>LINE 官方帳號</b><span>客戶從 LINE 傳訊進來</span></div>
+        </div>
+      </div>
+      <div class="arrow">▼　HTTPS REST ＋ SSE 串流（帶登入識別證 JWT）　▼</div>
+      <div class="band band-be">
+        <h4>⚙️ 後端層 — FastAPI 大腦<span class="tag">Python 3.12 · :8002</span></h4>
+        <div class="boxes">
+          <div class="box"><b>API 路由</b><span>接收 / 分派請求</span></div>
+          <div class="box"><b>Service 層</b><span>11 個工具邏輯</span></div>
+          <div class="box" style="border-color:#e2cdf0"><b>LangGraph 編排</b><span>指揮 AI（沿用既有）</span></div>
+          <div class="box" style="border-color:#f5c9c6"><b>合規 sidecar</b><span>送出前把關 ≤50ms</span></div>
+          <div class="box"><b>APScheduler</b><span>定時提醒 48/72/7d</span></div>
+          <div class="box"><b>認證中介層</b><span>取 tenant / 角色</span></div>
+          <div class="box" style="border-color:#06c755;background:#e8faf0"><b>LINE Webhook handler</b><span>收客戶傳入訊息</span></div>
+          <div class="box" style="border-color:#06c755;background:#e8faf0"><b>LINE Messaging API 用戶端</b><span>push 回覆給客戶</span></div>
+          <div class="box"><b>輪派（Assignment）</b><span>新客戶自動分配教練</span></div>
+        </div>
+      </div>
+      <div class="arrow">▼　讀寫資料 · 呼叫 AI · 記錄觀測 · LINE Messaging API　▼</div>
+      <div class="band band-data">
+        <h4>🗄️ 資料 / AI / 外部平台層</h4>
+        <div class="boxes">
+          <div class="box"><b>PostgreSQL+pgvector</b><span>自建 container</span></div>
+          <div class="box"><b>Postgres 原生 RLS</b><span>資料只有主人看得到</span></div>
+          <div class="box"><b>自建 JWT（FastAPI）</b><span>登入 / HS256</span></div>
+          <div class="box"><b>GCS（語音檔）</b><span>語音檔暫存 7 天</span></div>
+          <div class="box" style="border-color:#e2cdf0"><b>Claude AI</b><span>Haiku 快 / Sonnet 好</span></div>
+          <div class="box" style="border-color:#e2cdf0"><b>TTS 語音</b><span>OpenAI / ElevenLabs</span></div>
+          <div class="box" style="border-color:#d4d9df"><b>Langfuse·Sentry·OTel</b><span>成本 / 錯誤 / 追蹤</span></div>
+          <div class="box" style="border-color:#06c755;background:#e8faf0"><b>LINE Platform</b><span>Messaging API（webhook / push）</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="tip">＊此圖以純 CSS 繪製，不需網路也會顯示。下方的流程圖需要網路載入 Mermaid（若空白請連網後重新整理）。</p>
+  </div>
+
+  <!-- ============ 1. C4 L1 系統情境 ============ -->
+  <h2 id="l1">1. 系統情境圖 — 誰跟誰互動</h2>
+  <div class="card">
+    <p>最外圈視角：哪些<b>人/外部服務</b>會跟 Care Copilot 打交道。重點：<b>客戶透過 LINE 官方帳號傳訊</b>，後端透過 LINE Platform push 回覆；<b>健康問卷</b>則提供免登入連結給客戶填寫；其餘工具全由直銷商使用。</p>
+    <div class="mermaid">
+flowchart TB
+    Distributor["👤 直銷商<br/>主要使用者（11 個工具全用）"]
+    Contact["🙋 客戶（App 外）<br/>LINE 傳訊 / 問卷連結（免登入）"]
+    Legal["⚖️ Synergy 法務<br/>定期審合規詞庫（線下）"]
+    LinePlat["💬 LINE Platform<br/>Messaging API<br/>webhook 入 · push 出"]
+
+    subgraph SYS["Care Copilot 系統"]
+      PWA["📱 Mobile PWA<br/>React 19 · Vite · Tailwind"]
+      BE["⚙️ FastAPI 後端<br/>Python 3.12 · :8002<br/>含 LINE Webhook handler"]
+    end
+
+    subgraph AIBOX["外部 AI 服務"]
+      Claude["🧠 Anthropic Claude<br/>Haiku 4.5 / Sonnet 4.6"]
+      TTS["🔊 TTS 供應商<br/>OpenAI / ElevenLabs"]
+    end
+
+    subgraph DATABOX["GCP 資料層"]
+      PG["🗄️ PostgreSQL 16 + pgvector<br/>自建 container · RLS 隔離"]
+      GCS["☁️ GCS<br/>語音檔 · 7 天 TTL"]
+    end
+
+    Distributor -->|"操作 App（HTTPS）"| PWA
+    Contact -->|"7 天有效連結，免登入"| PWA
+    Contact -->|"傳訊給 LINE OA"| LinePlat
+    LinePlat -->|"webhook POST"| BE
+    BE -->|"push 回覆（教練審核後）"| LinePlat
+    LinePlat -->|"訊息送達客戶"| Contact
+    Legal -.->|"審詞庫（線下流程）"| BE
+    PWA -->|"REST + SSE"| BE
+    BE -->|"LangGraph 編排"| Claude
+    BE -->|"VoiceProvider 抽象"| TTS
+    BE -->|"讀寫資料"| PG
+    BE -->|"語音檔存取"| GCS
+
+    classDef fe fill:#e8f2fd,stroke:#1e88e5,color:#0b3d68;
+    classDef ai fill:#f3eafa,stroke:#8e44ad,color:#4a2063;
+    classDef data fill:#fdf3e2,stroke:#c8861a,color:#6b4708;
+    classDef line fill:#e8faf0,stroke:#06c755,color:#055a2b;
+    class PWA,BE fe; class Claude,TTS ai; class PG,GCS data; class LinePlat line;
+    </div>
+  </div>
+
+  <!-- ============ 2. C4 L2 容器圖 ============ -->
+  <h2 id="l2">2. 容器圖 — 後端內部長怎樣</h2>
+  <div class="card">
+    <p>把後端打開來看：直銷商請求先過<b>認證</b>，進<b>API 路由</b>，交給<b>Service 層</b>處理；LINE 客戶訊息由<b>Webhook handler</b> 接收，觸發<b>輪派（Assignment）</b>並寫入待回覆卡，教練審核後由<b>LINE Messaging 用戶端</b> push 回覆。Service 視需要呼叫 <b>AI 編排</b>、<b>合規 sidecar</b>、<b>排程器</b>，並讀寫 <b>PostgreSQL</b> 與 <b>GCS</b>。全程被<b>觀測層</b>記錄。</p>
+    <div class="mermaid">
+flowchart TB
+    PWA["📱 Mobile PWA<br/>React 19 · Vite · Tailwind v4<br/>PWA + Apple tokens"]
+    LinePlat["💬 LINE Platform<br/>Messaging API"]
+
+    subgraph BE["⚙️ FastAPI 後端 :8002"]
+      Auth["🔑 認證中介層<br/>自建 JWT（HS256）+ tenant context"]
+      Router["API 路由層<br/>/api/v1 · 依工具分模組"]
+      Service["Service 層<br/>11 個工具各自邏輯"]
+      Agent["🧩 LangGraph 編排層<br/>（沿用既有框架）"]
+      Comp["🛡️ 合規 sidecar<br/>regex ≤ 50ms · 純規則"]
+      Sched["⏰ APScheduler<br/>48h / 72h / 7d · 今日 5 件事"]
+      Obs["📊 觀測層<br/>OTel + Langfuse + Sentry"]
+      LineWH["💬 LINE Webhook handler<br/>POST /webhooks/line"]
+      LineClient["📤 LINE Messaging 用戶端<br/>push 回覆給客戶"]
+      Assign["🔄 Assignment（輪派）<br/>新客戶 → 下一位 active 教練<br/>既有 sticky；Leader 可改派"]
+    end
+
+    subgraph DATA["🗄️ GCP 資料層"]
+      PG["PostgreSQL 16 + pgvector<br/>自建 container · RLS 隔離"]
+      GCS["☁️ GCS<br/>語音檔 · 7 天 TTL（Object Lifecycle）"]
+    end
+
+    subgraph EXT["🧠 AI 服務"]
+      Claude["Anthropic Claude<br/>Haiku 4.5 / Sonnet 4.6"]
+      TTS["TTS<br/>OpenAI / ElevenLabs"]
+    end
+
+    PWA -->|"REST + SSE · Bearer JWT"| Auth
+    LinePlat -->|"webhook POST"| LineWH
+    LineWH --> Assign
+    LineWH -->|"寫 inbound_messages"| PG
+    Assign -->|"更新 assignment_cursor"| PG
+    LineWH --> Service
+    Auth --> Router
+    Router --> Service
+    Service --> Agent
+    Service --> Comp
+    Service --> Sched
+    Service -->|"SQLAlchemy + RLS"| PG
+    Service -->|"語音存取"| GCS
+    Service --> LineClient
+    LineClient -->|"push 訊息"| LinePlat
+    Agent -->|"LangGraph → Claude"| Claude
+    Service -->|"VoiceProvider.synthesize()"| TTS
+    Agent --> Obs
+    Service --> Obs
+
+    classDef fe fill:#e8f2fd,stroke:#1e88e5,color:#0b3d68;
+    classDef be fill:#e6f6ee,stroke:#2e9e6b,color:#0f4d31;
+    classDef ai fill:#f3eafa,stroke:#8e44ad,color:#4a2063;
+    classDef data fill:#fdf3e2,stroke:#c8861a,color:#6b4708;
+    classDef guard fill:#fcebea,stroke:#d64545,color:#7a1f1f;
+    classDef line fill:#e8faf0,stroke:#06c755,color:#055a2b;
+    class PWA fe; class Auth,Router,Service,Sched,Assign be; class Agent,Claude,TTS ai; class PG,GCS data; class Comp guard; class Obs be; class LineWH,LineClient,LinePlat line;
+    </div>
+  </div>
+
+  <!-- ============ 3. 資料流 1 生草稿 ============ -->
+  <h2 id="flow1">3. 資料流①　生訊息草稿（三道檢查 → 逐字串流）</h2>
+  <div class="card">
+    <p>這是最核心的流程，4 個工具接力：<span class="chip c-ai">情緒感測</span><span class="chip c-guard">太業務員</span><span class="chip c-guard">合規</span><span class="chip c-ai">草稿</span>。重點：<b>生成前先做三道檢查</b>，<b>AI 字逐個浮現（首字 &lt; 0.5 秒）</b>，<b>AI 絕不自動送出</b>——由直銷商按「複製到 LINE」。</p>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant D as 直銷商 PWA
+    participant API as 草稿串流端點
+    participant Em as 情緒感測
+    participant Sal as 太業務員檢查
+    participant Draft as 草稿服務
+    participant Comp as 合規 sidecar
+    participant LG as LangGraph（沿用既有）
+    participant AI as Claude Haiku→Sonnet
+    participant DB as PostgreSQL
+
+    D->>API: 要求生成草稿（contact、tone）
+    API->>Em: 取最近情緒
+    Em-->>API: stressed（信心 0.87）
+    Note over API: 壓力大 → 自動切「關懷」語氣
+    API->>Sal: 檢查連續推銷次數
+    Sal-->>API: streak = 2（未達 3，放行）
+    API->>Comp: 前置輕量掃描
+    Comp-->>API: green（12ms）
+    API->>Draft: 開始串流草稿
+    Draft->>LG: 呼叫草稿 agent
+    LG->>AI: 生首字（Haiku ≤ 0.5s）
+    AI-->>LG: 「Anna，」
+    LG-->>D: SSE：first_token（首字浮現）
+    LG->>AI: 全文串流（Sonnet）
+    AI-->>LG: token…token…token
+    LG-->>D: SSE：token（逐字浮現）
+    Draft->>Comp: 全文合規檢查
+    Comp->>DB: 寫入 compliance_checks
+    Comp-->>Draft: green
+    Draft->>DB: 寫入 message_drafts（green）
+    Draft-->>D: SSE：compliance_result（綠燈）
+    Draft-->>D: SSE：done（draft_id）
+    Draft->>DB: 更新每日 AI 成本
+    Draft--)DB: 非同步寫 learning_logs
+    Note over D: 直銷商按「複製到 LINE」（AI 不自動送）
+    D->>API: 採用草稿（adopt）
+    </div>
+    <div class="note"><b>紅燈異常路徑：</b>若全文合規檢查回傳「紅燈」，後端推送 <code>compliance_blocked</code>，<b>不寫入草稿、複製按鈕鎖住</b>，直銷商必須改寫後重生——這是不可逾越的守門規則。</div>
+  </div>
+
+  <!-- ============ 4. 資料流 2 樣品 ============ -->
+  <h2 id="flow2">4. 資料流②　發樣品 → 自動排程 → 今日 5 件事跳卡</h2>
+  <div class="card">
+    <p>樣品轉換是精油品牌的命脈。直銷商只要按一下「我發了樣品」，系統<b>自動排好 48h / 72h / 7d 三個跟進提醒</b>，時間到就<b>預生好草稿、推到今日 5 件事</b>，不會錯過黃金跟進時機。</p>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant D as 直銷商 PWA
+    participant API as 樣品端點
+    participant Smp as 樣品服務
+    participant Sch as APScheduler
+    participant Today as 今日 5 件事服務
+    participant Draft as 草稿服務（Haiku）
+    participant DB as PostgreSQL
+
+    D->>API: 記錄「我發了樣品（Omega+）」
+    API->>Smp: 建立樣品
+    Smp->>DB: 寫 samples（status = sent）
+    Smp->>DB: 寫 3 筆 sample_followups（48h / 72h / 7d）
+    Smp->>Sch: 排 3 個提醒 job
+    Smp-->>D: 201 已建立
+    Note over Sch: ⏰ 48 小時後自動觸發
+    Sch->>Today: 觸發跟進任務
+    Today->>DB: 標記 followup = notified
+    Today->>Draft: 預生跟進草稿
+    Draft-->>Today: 「上次的 Omega+ 用得怎樣？」
+    Today->>DB: 寫 today_tasks（跟進卡 + 草稿）
+    Note over D: ☀️ 直銷商早晨開 App
+    D->>API: 取今日 5 件事
+    API-->>D: 5 張任務卡（依優先序）
+    D->>API: 完成任務
+    API->>DB: 標記 done
+    </div>
+  </div>
+
+  <!-- ============ 5. 資料流 3 問卷 ============ -->
+  <h2 id="flow3">5. 資料流③　發問卷一次性連結 → 客戶免登入填 → 回填活檔案</h2>
+  <div class="card">
+    <p>客戶是<b>唯一</b>會接觸到的介面，也是<b>唯一免登入</b>的入口。連結 7 天有效、填一次就失效；填完 AI 生摘要（過合規），結果<b>回填到客戶活檔案</b>並推一張今日任務卡給直銷商。</p>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant D as 直銷商 PWA
+    participant API as FastAPI 後端
+    participant Q as 問卷服務
+    participant Sonnet as Claude Sonnet
+    participant Comp as 合規 sidecar
+    participant C as 客戶（免登入）
+    participant DB as PostgreSQL
+
+    D->>API: 對客戶發問卷
+    API->>Q: 建一次性連結（7 天）
+    Q->>DB: 寫 questionnaire_links（token）
+    Q-->>D: 連結 URL
+    D->>C: 透過 LINE / WhatsApp 傳連結
+    Note over C: 客戶點開（免註冊、免登入）
+    C->>API: 開啟連結
+    API->>Q: 用 token 取題目
+    Q->>DB: 驗證未過期 / 未填過
+    Q-->>C: 12 題問卷
+    C->>API: 送出答案
+    Q->>DB: 標記連結已填、失效
+    Q->>Sonnet: 生成摘要 + 關懷切角
+    Sonnet-->>Q: 摘要
+    Q->>Comp: 摘要過合規
+    Comp-->>Q: green
+    Q->>DB: 寫 questionnaire_responses
+    Q->>DB: 回填 contacts（健康關注）
+    Q->>DB: 新增 today_tasks 卡
+    API-->>C: 200「感謝填寫！」
+    Note over D: 直銷商收到通知 → 看摘要與切角
+    </div>
+  </div>
+
+  <!-- ============ 6. LINE 訊息資料流 ============ -->
+  <h2 id="flow-line">6. 資料流④　LINE 收訊 → 輪派 → 待回覆卡 → AI 草稿 → 教練審核 → push 回覆</h2>
+  <div class="card">
+    <p>每個租戶擁有一個<b>LINE 官方帳號（OA）</b>。客戶在 LINE 傳訊給 OA → LINE Platform 發 webhook 到後端 → 後端判斷新舊客戶（<b>新客戶輪派</b>給下一位 active 教練、<b>既有客戶 sticky</b> 維持原教練）→ 寫入 <code>inbound_messages</code> → 推送「待回覆」卡到今日 5 件事 → AI 自動生回覆草稿（過合規）→ <b>教練審核後按「發送」</b> → 後端呼叫 LINE Messaging API push 回覆給客戶。<b>AI 不自動回覆</b>，一切由教練把關。</p>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant C as 客戶（LINE）
+    participant LP as LINE Platform
+    participant WH as LINE Webhook handler
+    participant Asgn as Assignment（輪派）
+    participant DB as PostgreSQL
+    participant Today as 今日 5 件事服務
+    participant Draft as 草稿服務
+    participant Comp as 合規 sidecar
+    participant AI as Claude Haiku
+    participant Coach as 教練 PWA
+    participant LC as LINE Messaging 用戶端
+
+    C->>LP: 傳訊給 LINE OA（文字訊息）
+    LP->>WH: POST /webhooks/line
+    WH->>DB: 查詢 contacts（依 LINE user_id）
+    alt 新客戶（首次聯繫）
+      WH->>Asgn: 請求輪派教練
+      Asgn->>DB: 取 official_accounts.assignment_cursor
+      Asgn->>DB: 找下一位 active 教練（取模輪派）
+      Asgn->>DB: 更新 assignment_cursor<br/>建立 contacts（含教練綁定）
+      Asgn-->>WH: 分配教練 ID
+    else 既有客戶（sticky）
+      WH->>DB: 取已綁定教練 ID（不重新輪派）
+    end
+    WH->>DB: 寫 inbound_messages（status = pending）
+    WH->>Today: 觸發「待回覆」任務卡
+    Today->>DB: 寫 today_tasks（待回覆卡，高優先序）
+    Today->>Draft: 請 AI 預生回覆草稿
+    Draft->>AI: 生成回覆草稿（關懷語氣）
+    AI-->>Draft: 草稿內容
+    Draft->>Comp: 草稿過合規（≤50ms）
+    Comp-->>Draft: green / red
+    Draft->>DB: 寫 message_drafts（附合規狀態）
+    Draft-->>Today: 草稿就緒
+    Note over Coach: 教練開 App 看今日 5 件事
+    Coach->>Today: 取今日待辦卡
+    Today-->>Coach: 待回覆卡（含 AI 草稿）
+    Coach->>Draft: 審核草稿（可修改）
+    Coach->>LC: 按「發送」
+    LC->>LP: Messaging API push（userId）
+    LP->>C: 訊息送達客戶 LINE
+    LC->>DB: 更新 inbound_messages（status = replied）<br/>寫 outbound_messages
+    Note over Coach: AI 不自動回；共用 OA 用 push<br/>新客戶輪派；既有 sticky
+    </div>
+    <div class="note"><b>四大設計原則：</b>① <b>AI 不自動回覆</b>——草稿必須教練審核後才能送出，合規紅燈時發送鍵鎖住。② <b>共用 OA</b>——同租戶所有教練共用一個 LINE OA，以 push API 精準送給特定客戶。③ <b>新客戶輪派</b>——依 <code>official_accounts.assignment_cursor</code> 取模輪派，確保工作量均衡；Leader 可在後台改派。④ <b>既有客戶 sticky</b>——已有教練的客戶訊息直接路由回原教練，不重新輪派。非 OA 客戶（尚未加 LINE）的草稿維持「複製到 LINE」流程。</div>
+  </div>
+
+  <!-- ============ 7. 租戶隔離 ============ -->
+  <h2 id="tenant">7. 多租戶隔離 — 為什麼 A 永遠看不到 B 的客戶</h2>
+  <div class="card">
+    <p>這是<b>底線</b>。隔離做兩層：後端中介層自動帶上 <code>tenant_id</code>，資料庫 RLS 再強制一次。就算後端程式寫錯，資料庫這層也會擋。跨租戶存取一律回 <b>404（查無此資料）</b>，連「存在但無權」都不透露。</p>
+    <div class="split">
+      <div>
+        <div class="mermaid">
+flowchart TB
+    Req["請求進入<br/>Authorization: Bearer JWT"]
+    MW["TenantContext 中介層<br/>從 JWT 取 tenant_id"]
+    SVC["Service 層<br/>查詢自動帶 tenant_id"]
+    RLS["Postgres 原生 RLS<br/>資料庫層再強制一次"]
+    OK["✅ 同租戶 → 回傳資料 200"]
+    NO["⛔ 跨租戶 → RLS 篩空 → 回 404"]
+
+    Req --> MW --> SVC --> RLS
+    RLS -->|"同租戶"| OK
+    RLS -->|"跨租戶"| NO
+
+    classDef be fill:#e6f6ee,stroke:#2e9e6b,color:#0f4d31;
+    classDef data fill:#fdf3e2,stroke:#c8861a,color:#6b4708;
+    classDef bad fill:#fcebea,stroke:#d64545,color:#7a1f1f;
+    classDef good fill:#e8f2fd,stroke:#1e88e5,color:#0b3d68;
+    class MW,SVC be; class RLS data; class NO bad; class OK good;
+        </div>
+      </div>
+      <div>
+        <h3>兩道防線</h3>
+        <table>
+          <tr><th>防線</th><th>做什麼</th></tr>
+          <tr><td>① 後端中介層</td><td>從登入識別證取 <code>tenant_id</code>，自動加進每一筆查詢，禁止 Service 自己亂取</td></tr>
+          <tr><td>② 資料庫 RLS</td><td>資料庫層強制「只回屬於這個租戶的列」，是最後一道、也是最硬的一道</td></tr>
+        </table>
+        <div class="note">紅隊測試必過：R002 嘗試讀 R001 的客戶 → 回 <b>404</b>。資料隔離 0 容忍。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 7. 登入 ============ -->
+  <h2 id="auth">8. 登入流程 — 識別證怎麼運作</h2>
+  <div class="card">
+    <p>使用者登入後拿到一張電子識別證（JWT），裡面寫著「你是誰、哪個租戶、什麼角色」。之後每次請求都出示它，後端據此放行對應資料。認證由 FastAPI 後端自建，以 bcrypt 驗密碼、HS256 簽發 JWT，無須外部 Auth 服務。</p>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant D as 直銷商 PWA
+    participant API as FastAPI 後端<br/>POST /api/v1/auth/login
+    participant DB as PostgreSQL（RLS）
+
+    D->>API: 登入（email + 密碼）
+    API->>DB: 查 distributor（by email）
+    DB-->>API: 回傳 hashed_password / role / tenant_id
+    API->>API: bcrypt.verify（密碼比對）
+    API->>API: 自發 JWT（HS256，含 sub / role / tenant_id）
+    API-->>D: 發 JWT 識別證
+    D->>API: 帶 Bearer JWT 呼叫 API
+    API->>API: 解析 JWT → 取 sub / role / tenant_id
+    API->>API: SET LOCAL app.current_tenant<br/>注入 TenantContext（所有查詢自動帶 tenant_id）
+    API->>DB: 查詢（WHERE tenant_id = …，RLS 再強制）
+    DB-->>API: 隔離後的結果
+    API-->>D: 200 OK
+    Note over API,DB: tenant_id 不符 → RLS 篩空 → 回 404
+    </div>
+    <table>
+      <tr><th>識別證裡有什麼</th><th>用途</th></tr>
+      <tr><td><code>sub</code>（distributor_id）</td><td>你是哪位直銷商</td></tr>
+      <tr><td><code>role</code>（distributor / leader）</td><td>權限角色</td></tr>
+      <tr><td><code>tenant_id</code></td><td>你的資料隔間 → 餵給 RLS</td></tr>
+    </table>
+  </div>
+
+  <footer>
+    Care Copilot 架構與資料流總覽　·　由 <code>01_architecture.md</code> 重繪　·　2026-06-02<br/>
+    流程圖以 Mermaid 繪製（需網路載入）；最上方鳥瞰圖為純 CSS，離線也可看。
+  </footer>
+</div>
+
+<!-- 放大檢視 modal -->
+<div id="zoomModal" aria-hidden="true">
+  <div class="zoom-cap" id="zoomCap"></div>
+  <div class="zoom-toolbar">
+    <button data-z="in" title="放大">＋</button>
+    <button data-z="out" title="縮小">－</button>
+    <button data-z="reset" title="重設縮放">⟳</button>
+    <button data-z="close" title="關閉 (Esc)">✕</button>
+  </div>
+  <div id="zoomStage"><div id="zoomInner"></div></div>
+  <div class="zoom-help">滾輪縮放 · 拖曳平移 · Esc 關閉</div>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'loose',
+    theme: 'base',
+    themeVariables: {
+      fontFamily: '-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif',
+      fontSize: '16px',
+      primaryColor: '#eef4fb',
+      primaryBorderColor: '#9bb8d6',
+      primaryTextColor: '#1d1d1f',
+      lineColor: '#7d8794',
+      actorBkg: '#eef4fb',
+      actorBorder: '#9bb8d6',
+      noteBkgColor: '#fff7e0',
+      noteBorderColor: '#e3c766'
+    },
+    flowchart: { htmlLabels: true, curve: 'linear', useMaxWidth: true, nodeSpacing: 60, rankSpacing: 78, padding: 16 },
+    sequence: { useMaxWidth: true, wrap: true, width: 170, mirrorActors: false, noteAlign: 'left', messageFontSize: 14 }
+  });
+
+  function setupZoom(){
+    const modal = document.getElementById('zoomModal');
+    const stage = document.getElementById('zoomStage');
+    const inner = document.getElementById('zoomInner');
+    const cap   = document.getElementById('zoomCap');
+    let scale=1, tx=0, ty=0, dragging=false, sx=0, sy=0;
+
+    const apply = () => { inner.style.transform =
+      'translate(calc(-50% + '+tx+'px), calc(-50% + '+ty+'px)) scale('+scale+')'; };
+
+    function openDiagram(svg, title){
+      inner.innerHTML='';
+      const clone = svg.cloneNode(true);
+      clone.removeAttribute('style');
+      inner.appendChild(clone);
+      cap.textContent = title || '';
+      scale=1; tx=0; ty=0; apply();
+      modal.classList.add('open'); modal.setAttribute('aria-hidden','false');
+      requestAnimationFrame(()=>{
+        const r = clone.getBoundingClientRect();
+        const fit = Math.min((window.innerWidth*0.92)/r.width, (window.innerHeight*0.82)/r.height);
+        scale = (isFinite(fit) && fit>0) ? fit : 1; apply();
+      });
+    }
+    function closeDiagram(){
+      modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); inner.innerHTML='';
+    }
+
+    document.querySelectorAll('.mermaid').forEach(m=>{
+      const card = m.closest('.card');
+      let title=''; let h = card && card.previousElementSibling;
+      while(h && h.tagName!=='H2'){ h = h.previousElementSibling; }
+      if(h) title = h.textContent.trim();
+      if(card && !card.querySelector('.zoom-badge')){
+        const b=document.createElement('div'); b.className='zoom-badge'; b.textContent='🔍 放大';
+        card.appendChild(b);
+        b.addEventListener('click', ()=>{ const svg=m.querySelector('svg'); if(svg) openDiagram(svg,title); });
+      }
+      m.addEventListener('click', ()=>{ const svg=m.querySelector('svg'); if(svg) openDiagram(svg,title); });
+    });
+
+    document.querySelector('.zoom-toolbar').addEventListener('click', e=>{
+      const btn = e.target.closest('button'); const z = btn && btn.dataset.z; if(!z) return;
+      if(z==='in')        scale=Math.min(scale*1.25, 14);
+      else if(z==='out')  scale=Math.max(scale/1.25, 0.1);
+      else if(z==='reset'){ scale=1; tx=0; ty=0; }
+      else if(z==='close'){ closeDiagram(); return; }
+      apply();
+    });
+    stage.addEventListener('wheel', e=>{ e.preventDefault();
+      const d = e.deltaY<0 ? 1.12 : 1/1.12;
+      scale = Math.min(Math.max(scale*d, 0.1), 14); apply();
+    }, {passive:false});
+    stage.addEventListener('pointerdown', e=>{ dragging=true; sx=e.clientX-tx; sy=e.clientY-ty;
+      stage.classList.add('grabbing'); stage.setPointerCapture(e.pointerId); });
+    stage.addEventListener('pointermove', e=>{ if(!dragging) return; tx=e.clientX-sx; ty=e.clientY-sy; apply(); });
+    stage.addEventListener('pointerup',   ()=>{ dragging=false; stage.classList.remove('grabbing'); });
+    document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeDiagram(); });
+  }
+
+  mermaid.run({ querySelector: '.mermaid' }).then(setupZoom).catch(err=>{
+    console.error('Mermaid 渲染失敗：', err);
+    document.querySelectorAll('.mermaid').forEach(m=>{
+      if(!m.querySelector('svg')) m.insertAdjacentHTML('beforeend',
+        '<div style="color:#d64545;font-size:13px">⚠️ 流程圖需連網載入 Mermaid，請連網後重新整理。</div>');
+    });
+  });
+</script>
+</body>
+</html>

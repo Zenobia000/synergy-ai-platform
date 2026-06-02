@@ -1,5 +1,0 @@
-# Auto detect text files and normalize to LF in repo
-* text=auto eol=lf
-
-# Shell scripts for Linux must keep LF line endings
-.claude/statusline-linux.sh text eol=lf

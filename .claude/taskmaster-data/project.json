@@ -1,33 +1,39 @@
 {
-  "name": "synergy-ai-closer-copilot",
-  "description": "Synergy AI MVP — 教練成交副駕駛（問卷 + 商談摘要 + CRM + 自動跟進）",
-  "created": "2026-04-21",
-  "updated": "2026-04-24",
-  "mode": "full",
-  "timeline": "6-8 weeks MVP",
+  "name": "synergy-care-copilot",
+  "description": "AI 直銷 Care Copilot — 直銷商關懷副駕駛（11 工具，$39 prosumer 自費），Phase I MVP / 4 週 Pilot",
+  "created": "2026-06-02",
+  "updated": "2026-06-02",
+  "mode": "mvp",
+  "timeline": "4 週 Pilot (Phase I)",
+  "module": "repo 根獨立專案（backend/ + frontend/ 在 d:/project/synergy/ 最上層；不放 modules/，現有 modules/ 為 POC 忽略）",
   "language": {
     "backend": "Python 3.12",
     "frontend": "TypeScript"
   },
   "stack": {
     "backend": ["FastAPI", "Pydantic v2", "uv", "APScheduler", "structlog"],
-    "frontend": ["Next.js 15", "React 19", "Tailwind v4", "@tanstack/react-query"],
-    "database": "Supabase Cloud (PostgreSQL + pgvector + Auth)",
-    "llm": {
-      "abstraction": "LiteLLM",
-      "primary": "gemini/gemini-2.5-flash",
-      "fallback": ["anthropic/claude-haiku-4-5", "anthropic/claude-opus-4-6"],
-      "extensible": true
+    "frontend": ["React 19", "Vite", "Tailwind v4", "@tanstack/react-query", "PWA"],
+    "database": "PostgreSQL 16 + pgvector（標準 Postgres；dev 自建 container pgvector/pgvector:pg16，prod 待成本評估 Cloud SQL）；RLS 原生租戶隔離（後端 SET LOCAL app.current_tenant）",
+    "storage": "Google Cloud Storage (GCS)；語音檔 V4 Signed URL，7 天 TTL 由 Object Lifecycle 自動刪除",
+    "ai": {
+      "orchestration": "LangGraph（沿用既有框架，本次不重新設計）",
+      "quality": "anthropic/claude-sonnet-4-6",
+      "fast": "anthropic/claude-haiku-4-5",
+      "tts": "OpenAI TTS 或 ElevenLabs（選型未定，介面抽象化）",
+      "compliance": "regex sidecar (<50ms)，太業務員=純規則",
+      "cost_guardrail": "≤ USD 0.30 / 直銷商 / 日（計量 + 熔斷）"
     },
-    "notifications": {
-      "mvp_primary": "LINE Messaging API",
-      "mvp_fallback": "Resend (Email)",
-      "phase2": "WhatsApp / Telegram (跨品牌擴張時新增)"
-    },
+    "auth": "FastAPI 自建 JWT (HS256, python-jose + passlib[bcrypt])；登入 POST /api/v1/auth/login (email+password)；JWT claims 扁平 sub/tenant_id/role；密碼存 distributors.password_hash",
+    "observability": ["OpenTelemetry (Cloud Trace)", "Langfuse (AI trace)", "Sentry"],
+    "line": "LINE Messaging API via line-bot-sdk（每租戶一個 Official Account；webhook 收訊驗簽 HMAC + push 發送；reply token ~1 分鐘失效改用 push；round-robin 多教練輪派）",
     "deployment": {
-      "web": "Vercel",
-      "api": "Railway",
-      "db": "Supabase Cloud"
+      "target": "GCP",
+      "backend": "Cloud Run (容器化 FastAPI)",
+      "frontend": "Cloud Storage + Cloud CDN (靜態 PWA)",
+      "storage": "GCS",
+      "secrets": "GCP Secret Manager",
+      "db": "dev 自建 Postgres+pgvector container；prod 待成本評估 (Cloud SQL 或自管 container)",
+      "backend_port": 8002
     }
   },
   "uiStyle": {
@@ -35,58 +41,64 @@
     "primary": "apple"
   },
   "mvpScope": {
-    "epics": [
-      "A: 智能健康問卷 (Epic A)",
-      "B: 商談前摘要 (Epic B, ★ 核心)",
-      "C: 陽春版 CRM (Epic C)",
-      "D: 自動跟進提醒 (Epic D)"
+    "tools_11": [
+      "T01 關係記憶活檔案",
+      "T02 生活事件雷達",
+      "T03 語氣/情緒感測器",
+      "T04 太業務員警報",
+      "T05 今日 5 件事（retention 錨點）",
+      "T06 訊息草稿（3 語氣）",
+      "T07 樣品追蹤",
+      "T08 語音草稿",
+      "T09 快速異議處理器",
+      "T10 健康問卷（可選，非主流程）",
+      "T11 招募漏斗"
     ],
+    "line_integration": "LINE OA 收訊（webhook /api/v1/webhooks/line，X-Line-Signature 驗簽）→ 新客戶 round-robin 輪派教練（既有 sticky；Leader 可改派）→ 自動生回覆草稿（過合規 gate）→ 教練審核 → 按「發送」(/message-drafts/{id}/send) → LINE Messaging API push。AI 不自動回；非 OA 客戶維持手動補資料+複製到 LINE。新表 official_accounts(oa_)、inbound_messages(inb_)。",
+    "multi_coach_assignment": "一個 OA 多位教練共管；official_accounts.assignment_cursor 做 round-robin；RLS 三 session 變數（app.current_tenant_id / app.current_distributor / app.current_role），distributor 看自己、leader 看全租戶。",
+    "cross_cutting": ["合規低語 gate（所有外送+LINE 發送必過）", "學習紀錄", "Freemium 配額", "隱私同意與資料請求"],
     "excluded": [
-      "M1 貼文生成/SEO/故事包裝",
-      "M3 預約系統/異議知識庫",
-      "M4 執行追蹤/衛教推播",
-      "M5 成果報表/見證/轉介/潛力推薦",
-      "M6 月目標/績效看板/培訓/團隊儀表板",
-      "Multi-tenant UI (預留 schema)",
-      "合規引擎/多語系"
+      "佣金計算 / 完整電商",
+      "組織樹管理 / 自動發訊息",
+      "品牌後台整合（多品牌 Day1 抽象但不建後台 UI）",
+      "多語系（v1 繁中為主，語音支援英語）",
+      "客戶端 App（問卷為唯一客戶接觸面）",
+      "Leader Team 完整下線管理（排 Phase II）",
+      "LINE 自動回覆 / 主動群發；WhatsApp / IG 官方 API（LINE OA 收訊+教練輔助發送已納入 Phase I）"
     ]
   },
   "pilot": {
     "brand": "Synergy WorldWide",
-    "coaches": 3,
-    "duration": "4-6 weeks",
-    "target_kpis": {
-      "成交率": "≥ 20% (baseline 15%)",
-      "商談準備時間": "≤ 5 min (baseline 30+ min)",
-      "48h 跟進率": "≥ 80% (baseline < 40%)",
-      "問卷完成率": "≥ 50%",
-      "問卷→商談轉換率": "≥ 30%"
-    }
+    "participants": "5 位 Active 直銷商 + 1 位 Leader + 5 位下線（共 11 人）",
+    "duration": "4 週",
+    "north_star": "每週 Care Action 數",
+    "pmf_gate": "W4 結尾 5 位教練裡至少 4 位自願付 $39/月",
+    "kill_criteria": "AI 採用率 < 30% / 教練流失 ≥ 2/5 / 自願付 < 3/5 / 外送踩線 ≥ 3 次 / 成本超預算 50%"
   },
   "docs": {
-    "location": "docs/",
-    "mode_produced": "full",
+    "location": "MVP_docs/",
+    "mode_produced": "mvp",
     "files": [
-      "INDEX.md",
-      "01_prd.md",
-      "02_bdd.md",
-      "03_adr.md",
-      "04_architecture.md",
-      "05_api.md",
-      "06_modules.md",
-      "07_structure.md",
-      "08_design_dependencies.md",
-      "09_frontend_ia.md",
-      "10_security.md",
-      "11_deployment.md"
+      "PRD.md",
+      "00_tech-spec.md",
+      "01_architecture.md",
+      "02_api.md",
+      "03_data-model.md",
+      "04_frontend.md",
+      "05_backend.md",
+      "06_project-structure.md"
+    ],
+    "client_deliverables": [
+      "客戶需求清單_給客戶版.md",
+      "客戶需求清單_內部對照版.md"
     ]
   },
-  "wbsFile": ".claude/taskmaster-data/wbs.md",
-  "referencePRD": "system_design_docs/01_synergy_ai_prd.md (v1.0, superseded)",
-  "currentPRD": "docs/01_prd.md (v2.0)",
-  "strategyDocs": [
-    "system_design_docs/健康直銷AI系統_模組分層與MVP規劃.docx",
-    "system_design_docs/健康直銷AI平台_跨品牌擴張策略評估_麥肯錫分析.docx"
-  ],
+  "currentPRD": "docs/0516_vibecoding_template/mvp/prd.md (v0.3, 2026-05-20)",
+  "wbsFile": ".claude/taskmaster-data/wbs.md（⚠️ 仍為舊 closer-copilot；Care Copilot WBS 待 /task-init 產生）",
+  "supersedes": {
+    "product": "synergy-ai-closer-copilot",
+    "note": "v6 closer/健康問卷主流程概念已 pivot 廢棄；舊 docs/ 01_prd.md~14_team_workplan.md 與 docs/INDEX.md 整套為 superseded，僅供歷史參考。完整舊設定見 git 歷史。",
+    "deprecated_docs_dir": "docs/ (01_prd.md ~ 14_team_workplan.md, INDEX.md, 13_client_deliverables.md)"
+  },
   "github": "skip"
 }
