@@ -15,6 +15,7 @@
 | [04_frontend.md](./04_frontend.md)                         | 頁面清單、元件樹、Apple 設計 tokens、PWA manifest、狀態管理               |
 | [05_backend.md](./05_backend.md)                           | FastAPI 路由層、服務層、LangGraph agent 整合介面、APScheduler 排程        |
 | [06_project-structure.md](./06_project-structure.md)       | 目錄結構、埠號規劃、命名規範、開發環境啟動指令                            |
+| [07_team-division.md](./07_team-division.md)               | 團隊分工（50/30/20 垂直切片）、檔案所有權矩陣、低 merge 衝突協作策略      |
 | [客戶需求清單_給客戶版.md](./客戶需求清單_給客戶版.md)     | 面向 Synergy 教練的功能確認清單（非技術語言），承接 P0 待答問題的外部對話 |
 | [客戶需求清單_內部對照版.md](./客戶需求清單_內部對照版.md) | 客戶版需求對應的工程任務分解、P0 問題 Owner 與截止週次                    |
 | PRD.md                                                  | 功能模組導向說明（另見 PRD.md）                                           |
