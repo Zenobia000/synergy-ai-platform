@@ -1,4 +1,6 @@
-版本 v0.2 | 日期 2026-06-02 | 狀態 draft | 對應 PRD v0.3 | 獨立 repo 根結構
+版本 v0.3 | 日期 2026-06-07 | 狀態 draft | 對應 PRD v0.2（docs/PRD.md）/ 00_tech-spec v0.4 | 獨立 repo 根結構
+
+> v0.3 變更：新增 enrichment_service.py（來訊三合一分析）；learning_log event_type 增 voice_sent / inbound_enriched / suggestion_confirmed / suggestion_dismissed；語音保存改雙軌（未發送 7 天 / 已發送 30 天）。
 
 # 06 Care Copilot 專案結構指南
 
@@ -104,6 +106,7 @@ synergy/                                 ← repo 根（本專案根）
 │   │   │   ├── compliance_service.py    ← SYS，呼叫 sidecar + 寫 compliance_checks
 │   │   │   ├── assignment_service.py    ← LINE 輪詢指派（round-robin）
 │   │   │   ├── inbox_service.py         ← LINE 收件匣 / 待回覆訊息管理
+│   │   │   ├── enrichment_service.py    ← LINE 來訊三合一分析（情緒/事件/活檔案建議，單次 Haiku）
 │   │   │   ├── learning_log_service.py  ← PLT，fire-and-forget 背景寫入
 │   │   │   └── quota_service.py         ← PLT，配額計量與熔斷
 │   │   │
@@ -583,7 +586,7 @@ Token 檔位置：`src/styles/tokens/apple.css`
 | `communication_pref`（溝通偏好） | `line` / `whatsapp` / `ig_dm` / `email` |
 | `relationship_type`（關係分類） | `friend` / `acquaintance` / `prospect` / `customer` / `recruit_prospect` |
 | `today_task source_type`（任務來源） | `life_event` / `sample_followup` / `dormant` / `recruitment` / `salesy_alert` |
-| `learning_log event_type`（學習事件） | `emotion_read` / `draft_generated` / `draft_adopted` / `draft_rejected` / `salesy_alert_dismissed` / `salesy_alert_acknowledged` / `objection_used` / `compliance_triggered` / `compliance_overridden` / `voice_downloaded` |
+| `learning_log event_type`（學習事件） | `emotion_read` / `draft_generated` / `draft_adopted` / `draft_rejected` / `salesy_alert_dismissed` / `salesy_alert_acknowledged` / `objection_used` / `compliance_triggered` / `compliance_overridden` / `voice_downloaded` / `voice_sent` / `inbound_enriched` / `suggestion_confirmed` / `suggestion_dismissed` |
 | `objection_responses adopted_style`（異議採用） | `empathy` / `question` / `invite` / `none` |
 | `voice_style`（語音風格） | `warm_female` / `neutral_male` |
 | `followup_type`（樣品跟進類型） | `h48` / `h72` / `d7` |
@@ -627,7 +630,7 @@ ACCESS_TOKEN_TTL_HOURS=24
 DATABASE_URL=postgresql+asyncpg://care:<password>@localhost:5432/care
 
 # --- GCS 語音檔儲存 ---
-GCS_BUCKET=care-copilot-voice-clips        # 語音檔 bucket 名稱（7 天 TTL 由 GCS Object Lifecycle 管理）
+GCS_BUCKET=care-copilot-voice-clips        # 語音檔 bucket（未發送 7 天 / 已 OA 發送 30 天，APScheduler 依 expires_at / retention_until 清理）
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json  # GCP SA 金鑰路徑（prod: Secret Manager）
 
 # --- AI 供應商 ---

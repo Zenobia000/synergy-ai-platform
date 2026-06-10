@@ -1,6 +1,8 @@
 # 02 API 設計規範 — Care Copilot
 
-版本 v0.1 | 日期 2026-06-02 | 狀態 draft | 對應 PRD v0.3 | 專案 synergy（repo 根）
+版本 v0.2 | 日期 2026-06-07 | 狀態 draft | 對應 PRD v0.2（docs/PRD.md）/ 00_tech-spec v0.4 | 專案 synergy（repo 根）
+
+> v0.2 變更：新增 7.18 來訊自動分析與活檔案建議（contact-suggestions）；voice-clips 增 listen/send 端點（OA 語音 push）；message-drafts send 增太業務員發送前預警；webhook 處理增 enrichment 步驟。
 
 > 本文件定義 Care Copilot Phase I MVP 的所有對外 REST API 規範，包含設計約定、通用行為、錯誤處理、認證授權、速率限制與 11 個工具的完整端點。
 > 資料庫實體詳見 [./03_data-model.md](./03_data-model.md)；後端實作詳見 [./05_backend.md](./05_backend.md)；AI 編排層沿用既有框架，本次不重新設計。
@@ -33,6 +35,7 @@
    - 7.15 [平台支撐 (subscription / usage / consent / data-requests)](#715-平台支撐-subscription--usage--consent--data-requests)
    - 7.16 [學習紀錄 (learning-logs)](#716-學習紀錄-learning-logs-internal)
    - 7.17 [LINE 整合 (webhooks / inbox / message-drafts send / contacts assignment)](#717-line-整合-webhooks--inbox--message-drafts-send--contacts-assignment)
+   - 7.18 [來訊自動分析與活檔案建議 (contact-suggestions)](#718-來訊自動分析與活檔案建議-contact-suggestions)
 8. [資料模型 DTO Schemas](#8-資料模型-dto-schemas)
 9. [排程與內部事件](#9-排程與內部事件)
 10. [跨領域不變量](#10-跨領域不變量)
@@ -910,6 +913,8 @@ audio: <binary file> (mp3/m4a/wav, max 5MB, ≤ 5 分鐘)
 
 ### 7.3 互動記錄 (interactions)
 
+> **自動互動紀錄（LINE OA）**：OA 管道的收訊（`inbound_messages`）與發送（`message_drafts.sent_at` / `voice_clips.sent_at`）由系統自動寫入互動時間軸（`source = 'line_oa'`），教練無需手動補登。自動紀錄**原文不可修改**（PUT 回 `422 IMMUTABLE_INTERACTION`），僅可透過 `note` 欄位加註；手動補登紀錄（`source = 'manual'`）可自由編輯。GET 列表回應每筆含 `source` 欄位供前端標示來源。
+
 #### POST /api/v1/contacts/{contact_id}/interactions
 
 新增互動記錄。
@@ -1713,7 +1718,7 @@ AI 層說明：TTS 使用 `VoiceProvider` 抽象介面（OpenAI TTS 或 ElevenLa
     "voice_style": "warm_female",
     "language": "zh-TW",
     "duration_seconds": 25,
-    "storage_url": "https://storage.carecopilot.ai/voice/voc_abc123.mp3",
+    "storage_url": "https://storage.carecopilot.ai/voice/voc_abc123.m4a",
     "provider": "openai",
     "cost_usd": 0.012,
     "expires_at": "2026-06-09T10:30:00Z",
@@ -1722,7 +1727,7 @@ AI 層說明：TTS 使用 `VoiceProvider` 抽象介面（OpenAI TTS 或 ElevenLa
 }
 ```
 
-語音檔 7 天後自動過期刪除（APScheduler 排程）。
+語音檔格式為 m4a（AAC，LINE audio message 要求）。保存期雙軌：**未發送** 7 天後自動刪除；**已透過 OA 發送**（見 `/send`）保存至 `retention_until = sent_at + 30 天`（APScheduler 清理排程依 `retention_until` 刪除）。
 
 **Status Codes：** 201 Created / 404 NOT_FOUND（draft_id 不存在）/ 422 VOICE_DURATION_EXCEEDED / 429 QUOTA_EXCEEDED / 429 COST_LIMIT_REACHED
 
@@ -1766,9 +1771,67 @@ AI 層說明：TTS 使用 `VoiceProvider` 抽象介面（OpenAI TTS 或 ElevenLa
 
 ---
 
+#### POST /api/v1/voice-clips/{clip_id}/listen
+
+記錄教練試聽事件（發送前置條件）。
+
+| 項目 | 值 |
+|---|---|
+| Method | POST |
+| Auth Scope | distributor |
+
+**Request：** 無 body。
+
+**Response 200：**
+
+```json
+{"data": {"id": "voc_abc123", "listened_at": "2026-06-02T10:33:00Z"}}
+```
+
+**Status Codes：** 200 OK / 404 NOT_FOUND
+
+---
+
+#### POST /api/v1/voice-clips/{clip_id}/send
+
+教練試聽後將語音以 LINE audio message push 發送給 OA 客戶（G.6：人工審核硬限制）。
+
+| 項目 | 值 |
+|---|---|
+| Method | POST |
+| Auth Scope | distributor |
+
+**Request：** 無 body。
+
+**後端處理流程：**
+
+1. 檢查 `listened_at` 已存在；否則回 `422 VOICE_NOT_LISTENED`（未試聽不可發）
+2. 檢查對應草稿 `compliance_status != 'red'`；紅燈→回 `422 COMPLIANCE_RED_BLOCKED`
+3. 檢查草稿文字自語音生成後未被修改；已修改→回 `409 VOICE_STALE`（須重新生成語音並重掃合規）
+4. 取得 contact 的 `line_user_id`；若無（非 OA 客戶）→回 `422 VALIDATION_ERROR`
+5. 呼叫 LINE Messaging API push audio message（`originalContentUrl` = HTTPS 可達 URL、`duration` 毫秒）；失敗→`502 LINE_PUSH_FAILED`
+6. 成功→回填 `voice_clips.sent_at`、`voice_clips.line_message_id`、`retention_until = sent_at + 30d`；寫入 `learning_logs`（`event_type: voice_sent`）；自動寫入互動時間軸
+
+**Response 200：**
+
+```json
+{
+  "data": {
+    "id": "voc_abc123",
+    "sent_at": "2026-06-02T10:35:00Z",
+    "line_message_id": "line_msg_xyz",
+    "retention_until": "2026-07-02T10:35:00Z"
+  }
+}
+```
+
+**Status Codes：** 200 OK / 404 NOT_FOUND / 409 VOICE_STALE / 422 VOICE_NOT_LISTENED / 422 COMPLIANCE_RED_BLOCKED / 422 VALIDATION_ERROR（無 line_user_id）/ 502 LINE_PUSH_FAILED
+
+---
+
 #### DELETE /api/v1/voice-clips/{clip_id}
 
-提前刪除語音檔（從物件儲存移除）。
+提前刪除語音檔（從物件儲存移除）。**已發送**（`sent_at` 非空）且仍在保存期內的語音不可刪除（客戶重播期），回 `409 VOICE_RETENTION_ACTIVE`。
 
 | 項目 | 值 |
 |---|---|
@@ -1777,7 +1840,7 @@ AI 層說明：TTS 使用 `VoiceProvider` 抽象介面（OpenAI TTS 或 ElevenLa
 
 **Response 204：** No Content
 
-**Status Codes：** 204 No Content / 404 NOT_FOUND
+**Status Codes：** 204 No Content / 404 NOT_FOUND / 409 VOICE_RETENTION_ACTIVE
 
 ---
 
@@ -2617,7 +2680,8 @@ LINE 整合流程說明：每個租戶擁有一個 LINE Official Account（OA）
 1. 以 `source.userId`（line_user_id）查找 contacts；找不到→建立新 contact（`source = 'line_oa'`）並輪派給下一位 active 教練（依 `official_accounts.assignment_cursor`）
 2. 寫入 `inbound_messages`（`status = 'new'`）
 3. 寫入 `today_tasks`（`source_type = 'inbound_reply'`，推入被指派教練的今日 5 件事待回覆卡）
-4. 非同步觸發 T06 草稿預生成（帶 `in_reply_to_inbound_id`）；合規過紅燈時草稿狀態標 `compliance_red`，不自動發送
+4. 非同步觸發**來訊自動分析（enrichment，單次 Haiku 三合一）**：情緒判讀（更新 `contacts.current_emotion`）、生活事件抽取（產生 T02 任務卡）、活檔案重點建議（寫入 `contact_suggestions`，status=pending）；分析失敗不影響收訊主流程（Sentry 告警）；成本計入教練每日配額，熔斷時跳過分析
+5. 非同步觸發 T06 草稿預生成（帶 `in_reply_to_inbound_id`）；合規過紅燈時草稿狀態標 `compliance_red`，不自動發送
 
 **Response 200：**（LINE 平台要求 5 秒內回覆 200，否則視為失敗）
 
@@ -2644,18 +2708,21 @@ Content-Type: application/json
 
 ```json
 {
-  "edited_content": "Anna，最近睡得好一點了嗎？"
+  "edited_content": "Anna，最近睡得好一點了嗎？",
+  "acknowledge_salesy": false
 }
 ```
 
 `edited_content` 可選；若提供則以此為最終發送文字（同步更新 `message_drafts.content`）並重跑合規掃描；若未提供則直接以 `message_drafts.content` 發送。
+`acknowledge_salesy` 可選（預設 false）；收到 `409 SALESY_WARNING` 後教練確認仍要發送時帶 true 重送。
 
 **後端處理流程：**
 
 1. 合規檢查（compliance_sidecar 掃描）；紅燈→回 `422 COMPLIANCE_RED_BLOCKED`，拒絕發送
-2. 取得 contact 的 `line_user_id`；若無（non-OA 客戶）→回 `422 VALIDATION_ERROR`（`{"message": "此聯絡人無 LINE User ID，無法 push 發送"}`）
-3. 呼叫 LINE Messaging API push message；失敗→回 `502 LINE_PUSH_FAILED`
-4. 成功→回填 `message_drafts.sent_at`、`message_drafts.line_message_id`、`message_drafts.delivery_method = 'line_push'`；同步更新 `inbound_messages.status = 'replied'`
+2. **太業務員發送前預警（T04）**：以 OA 管道自動累計的 `salesy_streak_count` 判定，若本則為推銷型且將構成連續第 3 則，且 request 未帶 `acknowledge_salesy: true` →回 `409 SALESY_WARNING`（含 `{"streak_count": 2, "care_draft_id": "dft_care_xxx"}`，附預生純關懷草稿）；前端彈出預警 dialog，教練確認後帶 `acknowledge_salesy: true` 重送（寫入 `salesy_alert_acknowledged` 學習紀錄）
+3. 取得 contact 的 `line_user_id`；若無（non-OA 客戶）→回 `422 VALIDATION_ERROR`（`{"message": "此聯絡人無 LINE User ID，無法 push 發送"}`）
+4. 呼叫 LINE Messaging API push message；失敗→回 `502 LINE_PUSH_FAILED`
+5. 成功→回填 `message_drafts.sent_at`、`message_drafts.line_message_id`、`message_drafts.delivery_method = 'line_push'`；同步更新 `inbound_messages.status = 'replied'`；自動寫入互動時間軸並更新 `salesy_streak_count`
 
 **Response 200：**
 
@@ -2671,7 +2738,7 @@ Content-Type: application/json
 }
 ```
 
-**Status Codes：** 200 OK / 404 NOT_FOUND / 422 COMPLIANCE_RED_BLOCKED / 422 VALIDATION_ERROR（無 line_user_id）/ 502 LINE_PUSH_FAILED
+**Status Codes：** 200 OK / 404 NOT_FOUND / 409 SALESY_WARNING / 422 COMPLIANCE_RED_BLOCKED / 422 VALIDATION_ERROR（無 line_user_id）/ 502 LINE_PUSH_FAILED
 
 ---
 
@@ -2759,6 +2826,90 @@ Leader 手動改派教練（覆蓋輪派結果）。
 ```
 
 **Status Codes：** 200 OK / 403 FORBIDDEN（非 leader 角色）/ 404 NOT_FOUND / 422 VALIDATION_ERROR
+
+---
+
+### 7.18 來訊自動分析與活檔案建議 (contact-suggestions)
+
+每則 OA 來訊由 enrichment 管線（單次 Haiku 4.5 三合一呼叫）非同步分析，其中活檔案重點建議寫入 `contact_suggestions`（status=pending）。**G.7 唯讀硬限制**：建議須教練 confirm 才 patch 進 contacts，AI 永不直接寫活檔案。
+
+#### GET /api/v1/contacts/{contact_id}/suggestions
+
+列出該聯絡人的活檔案待確認建議。
+
+| 項目 | 值 |
+|---|---|
+| Method | GET |
+| Auth Scope | distributor |
+
+**Query Parameters：** `status`（過濾：`pending` / `confirmed` / `dismissed`；預設 `pending`）
+
+**Response 200：**
+
+```json
+{
+  "data": [
+    {
+      "id": "sug_abc123",
+      "contact_id": "ctc_abc123",
+      "inbound_message_id": "inb_abc123",
+      "field": "health_concerns",
+      "suggested_value": "睡眠品質差",
+      "evidence": "客戶 2026-06-07 來訊：「最近都睡不好」",
+      "status": "pending",
+      "created_at": "2026-06-07T10:00:00Z"
+    }
+  ]
+}
+```
+
+`field` enum：對應活檔案可建議欄位（`health_concerns` / `family_context` / `interests` / `life_status`）
+
+**Status Codes：** 200 OK / 404 NOT_FOUND
+
+---
+
+#### POST /api/v1/contact-suggestions/{suggestion_id}/confirm
+
+教練確認建議，後端將 `suggested_value` patch 進對應 contacts 欄位，並重算 contact_embedding。
+
+| 項目 | 值 |
+|---|---|
+| Method | POST |
+| Auth Scope | distributor |
+
+**Request：** 可選 `{"edited_value": "..."}` — 教練可修改建議內容後再確認。
+
+**Response 200：**
+
+```json
+{"data": {"id": "sug_abc123", "status": "confirmed", "confirmed_at": "2026-06-07T10:05:00Z"}}
+```
+
+寫入 `learning_logs`（`event_type: suggestion_confirmed`）。
+
+**Status Codes：** 200 OK / 404 NOT_FOUND / 409 CONFLICT（已 confirmed/dismissed）
+
+---
+
+#### POST /api/v1/contact-suggestions/{suggestion_id}/dismiss
+
+教練忽略建議（不入檔）。
+
+| 項目 | 值 |
+|---|---|
+| Method | POST |
+| Auth Scope | distributor |
+
+**Response 200：**
+
+```json
+{"data": {"id": "sug_abc123", "status": "dismissed", "dismissed_at": "2026-06-07T10:05:00Z"}}
+```
+
+寫入 `learning_logs`（`event_type: suggestion_dismissed`，誤抽率觀察素材）。
+
+**Status Codes：** 200 OK / 404 NOT_FOUND / 409 CONFLICT
 
 ---
 

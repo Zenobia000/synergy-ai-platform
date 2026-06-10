@@ -1,6 +1,8 @@
 # 05 後端架構規範（FastAPI + uv）
 
-版本 v0.2 | 日期 2026-06-02 | 狀態 draft | 對應 PRD v0.3 | 專案根 backend/
+版本 v0.3 | 日期 2026-06-07 | 狀態 draft | 對應 PRD v0.2（docs/PRD.md）/ 00_tech-spec v0.4 | 專案根 backend/
+
+> v0.3 變更：新增 16.8 來訊自動分析服務（enrichment_service，單次 Haiku 三合一）、16.9 語音 OA 發送（voice_service.send）、16.10 太業務員發送前預警；message_drafts/voice_clips 發送後自動寫入互動時間軸。
 
 ---
 
@@ -2633,6 +2635,68 @@ async def send(self, ctx, draft_id: str) -> None:
 ### 16.7 非 OA 客戶（manual source）
 
 非 LINE OA 客戶（source=manual）維持現有手動補資料流程：直銷商自行填入 contacts，複製草稿內容至 LINE App 傳送。`delivery_method=manual_copy`，不觸發 push_message。
+
+### 16.8 來訊自動分析服務（enrichment_service）
+
+每則 OA 來訊寫入後的非同步背景任務（不阻擋 webhook 200 回應）：
+
+```python
+# app/services/enrichment_service.py（介面節錄）
+# 單次 Haiku 4.5 呼叫，一次輸出三件事（控制成本，G.5）
+
+class EnrichmentResult(BaseModel):
+    emotion: Literal["stressed", "neutral", "happy"]
+    life_events: list[LifeEventExtract]          # T02：型別 + 摘要
+    profile_suggestions: list[ProfileSuggestion]  # T01：field + value + evidence
+
+async def enrich_inbound(inbound_id: str, tenant_ctx: TenantContext) -> None:
+    # 1. 成本前置檢查：熔斷中 → enrichment_status='skipped'，return（不拋例外）
+    # 2. 取最近 N 則 inbound_messages（同 contact）作為情緒判讀上下文
+    # 3. 單次 Haiku 4.5 呼叫 → EnrichmentResult（Langfuse span 記錄）
+    # 4. 分流寫入：
+    #    - contacts.current_emotion ← emotion（T03）
+    #    - life_events + today_tasks ← life_events（T02，去重：同 contact 同 event_type 24h 內不重複）
+    #    - contact_suggestions（status='pending'）← profile_suggestions（T01，G.7：不直接寫 contacts）
+    # 5. UPDATE inbound_messages SET enrichment_status='done', enriched_at, detected_emotion
+    # 6. learning_logs：event_type='inbound_enriched'
+    # 失敗：enrichment_status='failed'，Sentry 告警，不影響收訊主流程
+```
+
+掛載點：`webhooks.py` 處理完 `INSERT inbound_messages` 後以 `asyncio.create_task`（或 background task queue）觸發。
+
+### 16.9 語音 OA 發送（voice_service.send）
+
+```python
+# app/services/voice_service.py（send 方法節錄）
+async def send_voice(clip_id: str, tenant_ctx: TenantContext) -> VoiceSendResult:
+    # 1. listened_at 為空 → raise VoiceNotListenedException（422 VOICE_NOT_LISTENED）
+    # 2. 對應草稿 compliance_status == 'red' → raise ComplianceBlockedException（422）
+    # 3. 草稿 content 在語音生成後被修改（updated_at > clip.created_at）
+    #    → raise VoiceStaleException（409 VOICE_STALE，須重生語音重掃合規）
+    # 4. contact.line_user_id 為空 → 422 VALIDATION_ERROR
+    # 5. LINE push audio message（originalContentUrl=HTTPS 可達 URL, duration=ms）
+    # 6. 成功：sent_at=now(), line_message_id, retention_until=sent_at+30d
+    #    寫互動時間軸（source='line_oa', interaction_type='voice_sent'）
+    #    learning_logs：event_type='voice_sent'
+```
+
+語音檔格式 m4a（AAC，LINE 要求）；TTS 供應商若無法直接輸出 AAC，於 `storage.py` 上傳前加 ffmpeg 轉檔。清理排程：未發送依 `expires_at`（7 天）、已發送依 `retention_until`（30 天），APScheduler job 每日執行。
+
+### 16.10 太業務員發送前預警（pre-send gate）
+
+`message_draft_service.send()` 在合規檢查之後、LINE push 之前插入：
+
+```python
+# 1. 本則是否推銷型（純規則：產品關鍵字 + URL pattern，無 AI）
+# 2. 推銷型且 contact.salesy_streak_count >= 2 且 request.acknowledge_salesy != True
+#    → 預生純關懷草稿（Haiku，過合規）
+#    → raise SalesyWarningException（409 SALESY_WARNING，附 streak_count + care_draft_id）
+# 3. 教練帶 acknowledge_salesy=true 重送 → 放行
+#    → learning_logs：event_type='salesy_alert_acknowledged'
+# 4. 發送成功後更新 salesy_streak_count（推銷型 +1；關懷型歸零）
+```
+
+OA 管道的 streak 計數完全自動（依發送紀錄），不依賴教練手動補登互動。
 
 ---
 

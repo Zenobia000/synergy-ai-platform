@@ -1,6 +1,8 @@
 # 04 前端架構規範（React 19 + Vite + Tailwind v4 + PWA）
 
-版本 v0.2 | 日期 2026-06-02 | 狀態 draft | 對應 PRD v0.3 | 模組 care-copilot（repo 根 frontend/）
+版本 v0.3 | 日期 2026-06-07 | 狀態 draft | 對應 PRD v0.2（docs/PRD.md）/ 00_tech-spec v0.4 | 模組 care-copilot（repo 根 frontend/）
+
+> v0.3 變更：第 7 節新增入口 5（LINE 自動建議 SuggestionCard）與時間軸來源標示；9.3 發送流程加入太業務員預警 dialog（409 SALESY_WARNING）；9.6 VoiceButton 增 OA 客戶試聽後發送分流。
 
 ---
 
@@ -760,6 +762,28 @@ UI 流程：
 
 manifest.json share_target 設定（見第 10 節）。
 
+#### 入口 5：LINE 自動建議（SuggestionCard，OA 客戶限定）
+
+OA 客戶來訊經後端 enrichment 管線自動抽取重點，前端只負責呈現「待確認建議」並收教練決定（G.7：AI 不直接寫活檔案）：
+
+```
+UI 流程：
+1. ProfileTab 頂部顯示 PendingSuggestions 區塊（有 pending 建議時）
+   GET /api/v1/contacts/:contactId/suggestions?status=pending
+2. 每筆 SuggestionCard 顯示：
+   ┌──────────────────────────────────────────────┐
+   │  💡 建議補入活檔案：健康關注「睡眠品質差」      │
+   │  依據：6/7 來訊「最近都睡不好」                │
+   │  [✓ 確認入檔]  [✎ 修改後入檔]  [✕ 忽略]      │
+   └──────────────────────────────────────────────┘
+3. 確認 → POST /contact-suggestions/:id/confirm
+   修改 → 展開編輯框，confirm 時帶 edited_value
+   忽略 → POST /contact-suggestions/:id/dismiss
+4. confirm 成功 → invalidateQueries(['contacts', contactId])，活檔案即時更新
+```
+
+**互動時間軸來源標示**：互動記錄列表每筆依 `source` 顯示 badge——`line_oa` 顯示「LINE」標籤（原文唯讀，僅可加註 note）；`manual` 顯示「補登」標籤（可編輯）。兩者合併按 `occurred_at` 排序。
+
 ---
 
 ## 8. 合規 / 情緒 / 太業務員 UI 呈現規格
@@ -913,7 +937,17 @@ manifest.json share_target 設定（見第 10 節）。
 合規 gate：compliance_status = red → 按鈕 disabled，流程終止
     ↓（green / yellow 通過）
 POST /message-drafts/:draftId/send
-    ↓ 後端 LINE push 給客戶，更新 sent_at + delivery_method=line_push
+    ↓
+409 SALESY_WARNING？（即將連續第 3 則推銷型訊息）
+    ↓ 是 → SalesyPreSendDialog：
+    │   ┌──────────────────────────────────────────────┐
+    │   │ ⚠️ 這會是你連續第 3 則產品訊息               │
+    │   │ 先換個話題關心一下？                          │
+    │   │ [改用關懷草稿]（載入 care_draft_id）          │
+    │   │ [仍要發送]（帶 acknowledge_salesy:true 重送） │
+    │   └──────────────────────────────────────────────┘
+    ↓ 否（或教練確認後重送）
+後端 LINE push 給客戶，更新 sent_at + delivery_method=line_push
     ↓
 toast「已透過官方帳號回覆」+ 3 秒後消失
     ↓
@@ -980,9 +1014,27 @@ POST /api/v1/voice-clips {draft_id, voice_style, language}
     ↓ （後端 TTS 生成，10 秒內）
 顯示語音預覽播放器（duration_seconds 顯示）
     ↓
+依客戶類型分流：
+
+【manual 客戶】
 點「下載」→ 觸發下載 storage_url
          → POST /api/v1/voice-clips/:clipId/download（記錄採用）
          → toast「已下載！打開 LINE 上傳語音即可」
+
+【LINE OA 客戶】
+「發送」按鈕初始 disabled（灰色，提示「請先試聽」）
+    ↓
+教練按播放器播放 → onEnded（或播放 ≥ 3 秒）
+    → POST /api/v1/voice-clips/:clipId/listen
+    → 「發送」按鈕 enabled
+    ↓
+點「發送」→ POST /api/v1/voice-clips/:clipId/send
+    ↓ 422 VOICE_NOT_LISTENED → 重新要求試聽
+    ↓ 409 VOICE_STALE（草稿已改）→ 提示「草稿已修改，請重新生成語音」
+    ↓ 422 COMPLIANCE_RED_BLOCKED → 顯示合規警示
+    ↓ 成功
+toast「語音已透過官方帳號送出」
+queryClient.invalidateQueries(['inbox'])
 ```
 
 ---

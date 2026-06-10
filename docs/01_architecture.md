@@ -1,6 +1,8 @@
 # Care Copilot — 架構與設計文件
 
-版本 v0.2 | 日期 2026-06-02 | 狀態 draft | 對應 PRD v0.3 | 專案 synergy（repo 根，獨立專案）
+版本 v0.3 | 日期 2026-06-07 | 狀態 draft | 對應 PRD v0.2（docs/PRD.md）/ 00_tech-spec v0.4 | 專案 synergy（repo 根，獨立專案）
+
+> v0.3 變更：新增 LINE OA 來訊自動分析管線（inbound enrichment，單次 Haiku 三合一）、語音經 OA push 發送（audio message）、已發送語音 30 天保存策略。
 
 ---
 
@@ -456,7 +458,7 @@ sequenceDiagram
 | :--- | :--- | :--- |
 | `message_draft` | 草稿全文生成後，stream 結束前 | red → SSE `compliance_blocked` 事件；前端禁用複製按鈕 |
 | `sample_followup` | 預生跟進草稿完成時 | red → today_task 卡顯示警告，不允許採用 |
-| `voice_clip` | 語音合成前，文字腳本階段 | red → 阻擋 TTS 呼叫，回傳 422 |
+| `voice_clip` | 語音合成前，文字腳本階段；經 OA 發送前再次確認 | red → 阻擋 TTS 呼叫，回傳 422；發送階段 red → 拒絕 push。腳本修改後必須重新生成語音並重掃，不得舊語音配新腳本 |
 | `objection_response` | 三種回應全部生成後 | red → 前端隱藏紅燈回應，只顯示 green/yellow |
 | `questionnaire_summary` | Sonnet 摘要生成後 | red → 不回傳摘要，觸發改寫 |
 | `recruitment_draft` | 招募話術草稿完成後 | red → 強制阻擋，最嚴格（FTC 收入保證） |
@@ -479,6 +481,10 @@ sequenceDiagram
 | `compliance_triggered` | 合規黃 / 紅燈觸發 | 含 triggered_terms |
 | `compliance_overridden` | 黃燈被直銷商覆蓋 | 含 override_reason |
 | `voice_downloaded` | 直銷商呼叫 `/download` | 採用指標 |
+| `voice_sent` | 教練按發送、語音經 OA push 成功 | 採用指標；含 line_message_id |
+| `inbound_enriched` | OA 來訊三合一分析完成 | 含 emotion、life_events 數、suggestions 數、latency_ms |
+| `suggestion_confirmed` | 教練確認活檔案待確認建議 | 抽取準確率計算基準 |
+| `suggestion_dismissed` | 教練忽略活檔案待確認建議 | 誤抽率觀察 |
 
 **重要**：learning_logs 寫入失敗不得導致主流程失敗（async fire-and-forget），但失敗需 Sentry 告警。
 
@@ -535,7 +541,15 @@ class OpenAITTSProvider(VoiceProvider): ...
 class ElevenLabsProvider(VoiceProvider): ...
 ```
 
-語音檔上傳至 GCS 後，`voice_clips.storage_url` 儲存 GCS 物件路徑（例：`gs://care-copilot-voice/tnt_xyz/clip_abc.mp3`）；下載端點呼叫 `google-cloud-storage` SDK 產生 V4 Signed URL 回傳前端。
+語音檔上傳至 GCS 後，`voice_clips.storage_url` 儲存 GCS 物件路徑（例：`gs://care-copilot-voice/tnt_xyz/clip_abc.m4a`）；下載端點呼叫 `google-cloud-storage` SDK 產生 V4 Signed URL 回傳前端。
+
+**LINE 語音發送（audio message push）**：
+
+- 檔案格式採 **m4a（AAC）**——LINE audio message 的硬性要求；TTS 供應商若不支援直接輸出 AAC，後端加轉檔步驟（影響 P0-06 選型）
+- 發送流程：教練試聽（前端強制，未播放過不可發）→ POST `/voice-clips/{id}/send` → 後端確認 compliance_status 非 red → LINE push audio message（`originalContentUrl` = 對 LINE 伺服器可達的 HTTPS URL，`duration` 毫秒）→ 寫入 `voice_clips.sent_at`、`line_message_id`
+- **保存策略雙軌**：未發送語音維持 7 天 TTL；已發送語音 `retention_until = sent_at + 30 天`（客戶可重播期），由 APScheduler 清理 job 依 `retention_until` 刪除（取代單一 Lifecycle rule）
+- 語音 push 與文字 push 同計 LINE OA 每月免費額度
+- 學習紀錄：發送成功寫入 `voice_sent` 事件
 
 ---
 
@@ -779,6 +793,38 @@ sequenceDiagram
 - 客戶須先加 LINE OA 好友，才能收到 push message
 - AI 不自動發送；紅燈合規阻擋發送按鈕
 - 非 OA 客戶（`source != "line_oa"`）不走本流程，教練手動複製草稿至 LINE 外部傳送
+- 教練亦可將回覆轉為語音草稿，試聽後按發送 → LINE audio message push（見 3.6 VoiceProvider）
+
+### 4.5 來訊自動分析管線（inbound enrichment，單次 Haiku 三合一）
+
+每則 OA 來訊寫入 `inbound_messages` 後，觸發**非同步** enrichment 任務（不阻擋 webhook 3 秒回應；待回覆卡先產生，分析結果完成後補上）：
+
+```
+inbound_messages 寫入（webhook 已回 200）
+  │
+  ▼
+enrichment_service.enrich(inbound_id)   ← 非同步背景任務
+  │
+  ├─ 單次 Haiku 4.5 呼叫，一次輸出三件事（控制成本，G.5）：
+  │   {
+  │     "emotion": "stressed" | "neutral" | "happy",        → T03：更新 contacts.current_emotion
+  │     "life_events": [{type, summary}],                   → T02：產生關懷提醒 today_task
+  │     "profile_suggestions": [{field, value, evidence}]   → T01：寫入 contact_suggestions（status=pending）
+  │   }
+  │
+  ├─ G.7 唯讀硬限制：只產生建議，不自動回覆、不直接寫 contacts
+  │   （contact_suggestions 須教練 confirm 才 patch 進活檔案）
+  │
+  ├─ 成本：計入該教練 usage_quotas.ai_cost_usd_today（熔斷時跳過分析、僅記 log，不影響收訊）
+  │
+  ├─ 失敗處理：分析失敗不影響收訊與待回覆卡（Sentry 告警，學習紀錄標記）
+  │
+  └─ 學習紀錄：寫入 inbound_enriched 事件
+```
+
+**T04 自動計數**：OA 管道由 `message_drafts.sent_at` 自動累計推銷型訊息 streak（純規則判定，無 AI）；教練按「發送」第 3 則推銷型訊息前，後端回傳 `salesy_warning`，前端彈出預警 dialog，教練可選擇仍要發送（記錄 `salesy_alert_acknowledged` / `dismissed`）。
+
+**隱私**：`inbound_messages.raw_text` 比照 `contacts.raw_input` at-rest 加密；OA 歡迎訊息告知客戶「訊息會由 AI 協助整理，供您的服務教練參考；不會由 AI 自動回覆」（告知文字經法務確認）。
 
 ---
 
@@ -950,7 +996,7 @@ git push → GitHub Actions
 
 - 單段語音上限 60 秒，目標生成時間 < 10s
 - 若輸入文字預估 > 60 秒，後端在 TTS 呼叫前回傳 `422 VOICE_DURATION_EXCEEDED`（預估算法：中文約 4 字/秒，英文約 2.5 字/秒，假設值，需供應商選型後校正）
-- 語音檔上傳至 GCS，Object Lifecycle 設定 7 天後自動刪除（`voice_clips.storage_url` 儲存 GCS 物件路徑）
+- 語音檔上傳至 GCS：未發送的 7 天後自動刪除；**已透過 OA 發送的保存 30 天**（`voice_clips.retention_until`，APScheduler 清理 job 執行刪除），確保客戶在保存期內可重播
 
 ### 7.3 資料復原（RPO 15 分鐘）
 
@@ -1100,7 +1146,9 @@ Phase I（4 週 Pilot，本文件範圍）
 │  LINE 整合：LINE OA 收訊 + 輔助回覆（教練審核後手動發送）
 │     ├─ 每租戶一個 LINE OA，客戶加好友後傳訊
 │     ├─ webhook 收訊 → 新客戶輪派 → 今日5件事「待回覆」卡
+│     ├─ 來訊自動分析（單次 Haiku 三合一：情緒/事件/活檔案建議）
 │     ├─ 自動生草稿（過三道合規 gate）→ 教練審核 → 手動按發送
+│     ├─ 語音草稿可試聽後經 OA push 發送（audio message）
 │     └─ AI 不自動發送；紅燈阻擋發送
 │
 ▼

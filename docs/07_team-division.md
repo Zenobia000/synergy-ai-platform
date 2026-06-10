@@ -1,4 +1,4 @@
-<!-- 版本 v0.1 | 日期 2026-06-02 | 狀態 draft | 對應 PRD v0.3 / Tech Spec v0.3 | 專案 synergy(repo 根) -->
+<!-- 版本 v0.2 | 日期 2026-06-07 | 狀態 draft | 對應 PRD v0.2（docs/PRD.md） / Tech Spec v0.4 | 專案 synergy(repo 根) | v0.2 變更：B 增 enrichment_service 與 contact_suggestions（來訊三合一分析）；C 的 T08 增語音 OA 發送（m4a、listen/send、30 天保存）；資料表 29 → 30 -->
 
 # 07 團隊分工與低衝突協作策略 — Care Copilot
 
@@ -141,7 +141,7 @@ graph TD
 | 共用 schema | `backend/app/schemas/common.py` | 游標分頁、統一錯誤信封 | — |
 | Repo 基底 | `backend/app/repositories/base_repository.py` | findAll/findById/create/update/delete | — |
 | 基礎模型 | `backend/app/models/tenant.py`、`distributor.py`、`brand.py` | tenants / distributors / brands / brand_products 四張基礎表 | — |
-| Migration baseline | `backend/migrations/versions/0001_baseline.py` | Day 1 全 29 表建表（見 §9） | 後續各自獨立 revision |
+| Migration baseline | `backend/migrations/versions/0001_baseline.py` | Day 1 全 30 表建表（見 §9） | 後續各自獨立 revision |
 | 合規介面 | `backend/app/sidecars/compliance_sidecar.py` | `ComplianceSidecar.scan(text, tenant_id) -> ComplianceResult` 簽章 | 擴詞庫 |
 | 紀錄/配額介面 | `backend/app/services/learning_log_service.py`、`quota_service.py` | `LearningLogService.write(...)`、`QuotaService.check_*` / `record_ai_cost` 簽章 | — |
 | 語音抽象 | `backend/app/infra/voice_provider.py` | `VoiceProvider.synthesize(text, voice_style, language) -> bytes` 抽象 | — |
@@ -155,7 +155,7 @@ graph TD
 
 ### 3.2 凍結時點與「凍結會」
 
-- **W1 第 3 個工作日**前，A 必須交付地基層**可跑通的骨架**：能登入拿到 JWT、能打通一個 `/health`、29 表 migration 能 upgrade、`ComplianceSidecar.scan()` 有可呼叫的空實作（先回 green）、前端能登入進首頁殼。
+- **W1 第 3 個工作日**前，A 必須交付地基層**可跑通的骨架**：能登入拿到 JWT、能打通一個 `/health`、30 表 migration 能 upgrade、`ComplianceSidecar.scan()` 有可呼叫的空實作（先回 green）、前端能登入進首頁殼。
 - 交付後召開 **30 分鐘凍結會**：B、C 確認自己依賴的介面簽章 OK → 簽字凍結。凍結後這些介面進入 append-only 狀態。
 - 凍結前 B、C 不碰地基檔；做自己工具的**純邏輯與 mock**（service 內部、domain 規則、前端元件 + 假資料），等凍結後再接真介面。
 
@@ -181,7 +181,7 @@ graph TD
 | `api/samples.py`、`services/sample_service.py`、`repositories/sample_repository.py`、`models/sample.py`、`schemas/sample.py`、`agents/sample_draft_agent.py`、`domain/sample_schedule.py` | B | T07 樣品追蹤 |
 | `api/recruitment.py`、`services/recruitment_service.py`、`models/recruitment.py`、`schemas/recruitment.py`、`agents/recruitment_agent.py` | B | T11 招募漏斗 |
 | `api/questionnaire.py`、`services/questionnaire_service.py`、`models/questionnaire.py`、`schemas/questionnaire.py`、`agents/questionnaire_agent.py` | B | T10 健康問卷 |
-| `api/webhooks.py`、`services/assignment_service.py`、`inbox_service.py`、`repositories/official_account_repository.py`、`inbound_message_repository.py`、`models/official_account.py`、`inbound_message.py`、`infra/line_client.py` | B | LINE 整合 |
+| `api/webhooks.py`、`services/assignment_service.py`、`inbox_service.py`、`enrichment_service.py`、`repositories/official_account_repository.py`、`inbound_message_repository.py`、`contact_suggestion_repository.py`、`models/official_account.py`、`inbound_message.py`、`contact_suggestion.py`、`infra/line_client.py` | B | LINE 整合（含來訊三合一分析與活檔案待確認建議） |
 | `api/emotion.py`、`services/emotion_service.py`、`models/emotion.py`、`schemas/emotion.py`、`agents/emotion_agent.py` | C | T03 情緒感測 |
 | `api/salesy_alerts.py`、`services/salesy_alert_service.py`、`sidecars/salesy_rules.py`、`models/salesy_alert.py`、`schemas/salesy_alert.py` | C | T04 太業務員警報（純規則） |
 | `api/voice_clips.py`、`services/voice_service.py`、`repositories/voice_repository.py`、`models/voice_clip.py`、`schemas/voice_clip.py`、`infra/openai_tts.py`、`elevenlabs_tts.py`、`storage.py` | C | T08 語音草稿 |
@@ -217,7 +217,7 @@ graph TD
 **W1（地基週，全隊關鍵路徑）**
 - 建立 backend/frontend 獨立專案骨架（:8002 / :3002）、docker-compose 起 pgvector container。
 - §3.1 全部地基層：core、認證（JWT 登入、distributor/leader）、DB + RLS 三 session 變數、deps、main 路由註冊機制、觀測（OTel/Langfuse/Sentry）。
-- **29 表 Alembic baseline migration**（§9）+ 基礎表 model（tenants/distributors/brands/brand_products）。
+- **30 表 Alembic baseline migration**（§9）+ 基礎表 model（tenants/distributors/brands/brand_products）。
 - **SYS 合規 sidecar**：`ComplianceSidecar.scan()` 介面 + 50 詞 regex（法務詞庫 P0-09 未到前用 10 詞佔位），綠/黃/紅，< 50ms，100% 寫 `compliance_checks`（G.2）。
 - **PLT 扇入介面**：`LearningLogService.write()`（fire-and-forget，G.4）、`QuotaService`（Freemium/Pro 配額 + 成本熔斷 G.5）、`cost_guard`。
 - 前端殼：client/sse/errors、authStore、routes 機制、ui 基礎元件、Apple tokens、PWA。
@@ -241,7 +241,8 @@ graph TD
 - `infra/line_client.py`：封裝 line-bot-sdk，`verify_signature` / `push_message`。
 - `api/webhooks.py`：`POST /api/v1/webhooks/line`（公開，X-Line-Signature HMAC 驗簽，< 3s 回 200）。
 - `assignment_service.py`：新客戶 round-robin（`official_accounts.assignment_cursor`）、既有客戶 sticky、Leader 改派 `PUT /contacts/{id}/assignment`。
-- `inbox_service.py` + `GET /inbox`：寫 `inbound_messages`、待回覆篩選；自動生回覆草稿（Haiku 4.5，過合規）→ 教練審核 → `POST /message-drafts/{id}/send` → LINE push（G.1/G.6：AI 不自動回、紅燈擋送）。
+- `inbox_service.py` + `GET /inbox`：寫 `inbound_messages`、待回覆篩選；自動生回覆草稿（Haiku 4.5，過合規）→ 教練審核 → `POST /message-drafts/{id}/send` → LINE push（G.1/G.6：AI 不自動回、紅燈擋送；含太業務員發送前預警 409 SALESY_WARNING）。
+- `enrichment_service.py`：來訊三合一分析（單次 Haiku：情緒/生活事件/活檔案建議）→ 寫 `contact_suggestions`（G.7：教練 confirm 才入檔）+ `contact-suggestions` confirm/dismiss 端點；非同步、失敗不阻收訊。
 - 前端 InboxPage + InboxMessageCard + ReplyReviewPanel（含發送按鈕）。
 
 **T02 生活事件雷達（W2）**：規則 + Haiku 4.5 抽取，**寫 `life_events` 表**（T05 自己來讀，零直接呼叫）。
@@ -266,7 +267,7 @@ graph TD
 
 **T03 情緒感測（W2）**：單一 endpoint，Haiku 4.5 三檔（stressed/neutral/happy）。前端 EmotionBadge 元件 + useEmotionDetect hook，**交付元件給 A 嵌入 ContactDetail**（props 介面交付，不碰 A 的頁面檔）。
 
-**T08 語音草稿（W4）**：實作 A 已定義的 `VoiceProvider` 抽象 → `openai_tts.py`（W4 選型前先做 OpenAI）、GCS 上傳 + V4 Signed URL（7 天 Lifecycle）。介面 = 文字進、mp3 出、≤ 60s。前端 VoicePlayer 元件（預覽 + 下載）。
+**T08 語音草稿（W4）**：實作 A 已定義的 `VoiceProvider` 抽象 → `openai_tts.py`（W4 選型前先做 OpenAI）、GCS 上傳 + V4 Signed URL。介面 = 文字進、**m4a（AAC）出**（LINE audio message 要求）、≤ 60s。保存雙軌：未發送 7 天 / 已 OA 發送 30 天（`retention_until`）。OA 發送流程：`/listen`（試聽前置）→ `/send`（LINE push audio message；未試聽 422、紅燈 422、草稿已改 409 VOICE_STALE）——LINE push 呼叫沿用 B 的 `line_client.py`。前端 VoicePlayer 元件（預覽 + 下載 / OA 客戶試聽後發送）。
 
 **PLT 訂閱/同意/資料請求（W4）**：subscriptions CRUD + Subscription 頁（方案比較、升級 CTA）、consents 記錄、data_requests（export/delete，30/7 天）、QuotaBanner（讀 A 的 quota API 顯示剩餘額度）。皆為 CRUD/展示。
 
@@ -393,7 +394,7 @@ W1 由 A 從 `.claude/ui/apple/DESIGN.md` 一次抄齊 token，**凍結後 appen
 
 ## 9. Alembic Migration 協作規範（最容易衝突，單獨立規）
 
-1. **W1 baseline**：A 出 `0001_baseline.py`，Day 1 一次建好全 29 表（含 official_accounts/inbound_messages、含 RLS policy、pgvector 欄位）。對齊 03_data-model.md。
+1. **W1 baseline**：A 出 `0001_baseline.py`，Day 1 一次建好全 30 表（含 official_accounts/inbound_messages/contact_suggestions、含 RLS policy、pgvector 欄位）。對齊 03_data-model.md。
 2. **凍結後各自獨立 revision**：之後每人對自己的表做變更，各自 `alembic revision -m "<owner>_<desc>"`；**禁止改動他人已 merge 的 revision**。
 3. **多 head 處理**：兩人同時從同一 head 分出 → 出現多 head，用 `alembic merge -m "merge <a> <b>" <head1> <head2>` 合併，不互相 rebase 對方的遷移。
 4. **命名**：revision message 帶 owner 與工具，例 `b_add_line_user_id_to_contacts`。
